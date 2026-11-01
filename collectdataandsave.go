@@ -51,7 +51,7 @@ type sviEmptyDelete struct {
 }
 
 func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
-	log.Printf("[debug] Connecting to switch %s", swName)
+	debugf("Connecting to switch %s", swName)
 
 	var output1, output2, cdpOut []string
 	var err1, err2, err3 error
@@ -106,7 +106,7 @@ func linkMACReason(linkLocs []macLocation, cdpLinesBySwitch map[string][]string,
 		found, remote := nxthst.FindNextPortbyMac(cdpLinesBySwitch[loc.switchName], loc.switchName, *nxthst.NewLocMacLineData("", "", loc.iface))
 		managed := found && hostNamesSet[strings.ToLower(remote)]
 		if debugCount < 15 {
-			log.Printf("[debug] link-only %s/%s -> CDP found=%v host=%q managed=%v", loc.switchName, loc.iface, found, remote, managed)
+			debugf("link-only %s/%s -> CDP found=%v host=%q managed=%v", loc.switchName, loc.iface, found, remote, managed)
 			debugCount++
 		}
 		cache[key] = managed
@@ -235,7 +235,7 @@ func collectDataAndSave() {
 					visited[nh] = true
 					batchNewQueue = append(batchNewQueue, nh)
 					discoveredManaged[nh] = true
-					log.Printf("[debug] Discovered downstream switch %s via CDP on %s (%s)", nh, res.data.SwitchName, neighbor.LocalInterface)
+					debugf("Discovered downstream switch %s via CDP on %s (%s)", nh, res.data.SwitchName, neighbor.LocalInterface)
 				}
 			}
 			mu.Unlock()

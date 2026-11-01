@@ -10,9 +10,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alecthomas/kong"
+
 	"github.com/ales999/cisaccs/v2"
 	"go.etcd.io/bbolt"
 )
+
+var cli struct {
+	// Режим поиска одного MAC вместо заполнения базы данных. MAC передаётся после -s.
+	SearchMAC string `short:"s" name:"search" help:"Поиск переданного MAC вместо заполнения базы данных"`
+	// Отладочный вывод записей [debug].
+	Debug bool `short:"d" name:"debug" help:"Выводить записи [debug]"`
+}
 
 var rootSwitches = []string{
 	"switch1",
@@ -89,6 +98,8 @@ var (
 	sviSeenBucket   = []byte("SVIVlanSeen")
 	isScanning      bool
 	scanMu          sync.Mutex
+	// debugEnabled управляет выводом записей [debug] (флаг -d).
+	debugEnabled bool
 )
 
 // emptySVIDays — сколько дней SVI должен оставаться без динамических MAC-адресов,
@@ -97,6 +108,16 @@ var (
 const emptySVIDays = 30
 
 func main() {
+
+	kong.Parse(&cli,
+		kong.Name("cmacdbs"),
+		kong.Description("Сбор MAC-адресов с Cisco-коммутаторов с отслеживанием истории перемещений"),
+		kong.UsageOnError(),
+	)
+
+	// Включает/выключает вывод записей [debug].
+	debugEnabled = cli.Debug
+
 	var err error
 	db, err = bbolt.Open("macs.db", 0600, &bbolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
@@ -104,7 +125,26 @@ func main() {
 	}
 	defer db.Close()
 
+	// Если указан -s, ищем переданный MAC вместо заполнения базы.
+	if strings.TrimSpace(cli.SearchMAC) != "" {
+		searchMac(cli.SearchMAC)
+		return
+	}
+
 	collectDataAndSave()
+}
+
+// debugf выводит отладочную запись только когда включена отладка (флаг -d).
+func debugf(format string, args ...any) {
+	if debugEnabled {
+		log.Printf("[debug] "+format, args...)
+	}
+}
+
+// searchMac — режим поиска одного MAC вместо заполнения базы данных.
+// Тело будет дописано позже.
+func searchMac(mac string) {
+	debugf("searchMac для MAC %s", mac)
 }
 
 func getHostsFile() string {
