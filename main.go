@@ -141,10 +141,91 @@ func debugf(format string, args ...any) {
 	}
 }
 
-// searchMac — режим поиска одного MAC вместо заполнения базы данных.
-// Тело будет дописано позже.
-func searchMac(mac string) {
-	debugf("searchMac для MAC %s", mac)
+// searchMac ищет переданный MAC в базе данных и выводит найденные данные:
+// текущее место нахождения из MacHistory (или запись из UnfoundMAC, если MAC
+// не резолдится в конечную точку). Формат ввода гибкий: принимает разделители
+// «:», «-» и «.» (в т.ч. cisco-вид 0011.2233.4455).
+func searchMac(raw string) {
+	key, ok := normalizeMAC(raw)
+	if !ok {
+		fmt.Printf("Ошибка: %q не похоже на MAC-адрес\n", raw)
+		return
+	}
+
+	// Первоочередной вариант — полноценная запись с историей перемещений.
+	if rec, err := loadMacRecord(key); err != nil {
+		fmt.Printf("Ошибка чтения БД: %v\n", err)
+		return
+	} else if rec.Current.SwitchID != "" || len(rec.History) > 0 {
+		fmt.Printf("MAC %s\n", formatMAC(key))
+		if rec.Current.SwitchID != "" {
+			fmt.Printf("  Сейчас:     %s / %s (%s)\n", rec.Current.SwitchID, rec.Current.Port, ts(rec.Current.Timestamp))
+		}
+		for i, h := range rec.History {
+			fmt.Printf("  История %d:  %s / %s (%s)\n", i+1, h.SwitchID, h.Port, ts(h.Timestamp))
+		}
+		return
+	}
+
+	// MAC нет в MacHistory — проверим «не найденных» (линк за пределами области).
+	if unf, err := loadUnfoundMAC(key); err != nil {
+		fmt.Printf("Ошибка чтения БД: %v\n", err)
+		return
+	} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
+		fmt.Printf("MAC %s\n", formatMAC(key))
+		fmt.Printf("  Статус:     не резолётся в конечную точку (reason=%s)\n", unf.Reason)
+		if unf.LastSwitch != "" {
+			fmt.Printf("  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
+		}
+		return
+	}
+
+	fmt.Printf("MAC %s не найден в базе\n", formatMAC(key))
+}
+
+// normalizeMAC приводит строку к каноническому MAC-ключу (hex, нижний регистр,
+// без разделителей — как в ключах БД) и возвращает false, если входная строка
+// не похожа на валидный MAC-адрес. Принимаются разделители «:», «-», «» и
+// cisco-вид «0011.2233.4455».
+func normalizeMAC(mac string) (string, bool) {
+	clean := strings.Map(func(r rune) rune {
+		switch r {
+		case ':', '-', '.', ' ':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(mac))
+	clean = strings.ToLower(clean)
+	if len(clean) != 12 {
+		return "", false
+	}
+	for i := 0; i < len(clean); i++ {
+		c := clean[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", false
+		}
+	}
+	return clean, true
+}
+
+// formatMAC возвращает канонический ключ в человеочитаемом виде 00:11:22:33:44:55.
+func formatMAC(key string) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(key); i += 2 {
+		if i > 0 {
+			b.WriteByte(':')
+		}
+		b.WriteString(strings.ToUpper(key[i : i+2]))
+	}
+	return b.String()
+}
+
+// ts форматирует временную метку для вывода.
+func ts(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Format("2006-01-02 15:04:05")
 }
 
 func getHostsFile() string {
@@ -223,6 +304,24 @@ func loadMacRecord(macAddr string) (*MacRecord, error) {
 			return nil
 		}
 		rec = &MacRecord{}
+		return json.Unmarshal(data, rec)
+	})
+	return rec, err
+}
+
+// loadUnfoundMAC возвращает запись из «не найденных» MAC (ноль, если её нет).
+func loadUnfoundMAC(macAddr string) (*UnfoundRecord, error) {
+	var rec *UnfoundRecord
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(unfoundBucket)
+		if b == nil {
+			return nil
+		}
+		data := b.Get([]byte(macToKey(macAddr)))
+		if data == nil {
+			return nil
+		}
+		rec = &UnfoundRecord{}
 		return json.Unmarshal(data, rec)
 	})
 	return rec, err
