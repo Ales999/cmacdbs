@@ -199,9 +199,9 @@ Unidirectional Mode: off
 func TestParseCDPNeighborsMultiLink(t *testing.T) {
 	got := parseCDPNeighbors(splitLines(swTmsCore01CDP))
 	want := map[string]CDPNeighbor{
-		"FiftyGigE2/0/39": {NeighborHostname: "tmscore01", NeighborDeviceID: "Tmscore01", LocalInterface: "FiftyGigE2/0/39"},
-		"FiftyGigE1/0/39": {NeighborHostname: "tmscore01", NeighborDeviceID: "Tmscore01", LocalInterface: "FiftyGigE1/0/39"},
-		"FiftyGigE1/0/8":  {NeighborHostname: "tmscore02", NeighborDeviceID: "Tmscore02", LocalInterface: "FiftyGigE1/0/8"},
+		"FiftyGigE2/0/39": {NeighborHostname: "tmscore01", NeighborDeviceID: "Tmscore01", LocalInterface: "FiftyGigE2/0/39", RemoteInterface: "TenGigabitEthernet1/0/2"},
+		"FiftyGigE1/0/39": {NeighborHostname: "tmscore01", NeighborDeviceID: "Tmscore01", LocalInterface: "FiftyGigE1/0/39", RemoteInterface: "TenGigabitEthernet1/0/1"},
+		"FiftyGigE1/0/8":  {NeighborHostname: "tmscore02", NeighborDeviceID: "Tmscore02", LocalInterface: "FiftyGigE1/0/8", RemoteInterface: "TenGigabitEthernet1/1/4"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mismatch:\n got=%v\nwant=%v", got, want)
@@ -211,11 +211,11 @@ func TestParseCDPNeighborsMultiLink(t *testing.T) {
 func TestParseCDPNeighborsMixedTopology(t *testing.T) {
 	got := parseCDPNeighbors(splitLines(swDcm4500CDP))
 	want := map[string]CDPNeighbor{
-		"TenGigabitEthernet1/1/13": {NeighborHostname: "0050568d209a", NeighborDeviceID: "0050568d209a", LocalInterface: "TenGigabitEthernet1/1/13"},
-		"TenGigabitEthernet2/1/25": {NeighborHostname: "myswcm36", NeighborDeviceID: "myswcm36", LocalInterface: "TenGigabitEthernet2/1/25"},
-		"TenGigabitEthernet1/1/25": {NeighborHostname: "myswcm36", NeighborDeviceID: "myswcm36", LocalInterface: "TenGigabitEthernet1/1/25"},
-		"TenGigabitEthernet1/1/24": {NeighborHostname: "myswcm37", NeighborDeviceID: "myswcm37", LocalInterface: "TenGigabitEthernet1/1/24"},
-		"TenGigabitEthernet2/1/24": {NeighborHostname: "myswcm37", NeighborDeviceID: "myswcm37", LocalInterface: "TenGigabitEthernet2/1/24"},
+		"TenGigabitEthernet1/1/13": {NeighborHostname: "0050568d209a", NeighborDeviceID: "0050568d209a", LocalInterface: "TenGigabitEthernet1/1/13", RemoteInterface: "eth0"},
+		"TenGigabitEthernet2/1/25": {NeighborHostname: "myswcm36", NeighborDeviceID: "myswcm36", LocalInterface: "TenGigabitEthernet2/1/25", RemoteInterface: "TenGigabitEthernet1/1/4"},
+		"TenGigabitEthernet1/1/25": {NeighborHostname: "myswcm36", NeighborDeviceID: "myswcm36", LocalInterface: "TenGigabitEthernet1/1/25", RemoteInterface: "TenGigabitEthernet2/1/4"},
+		"TenGigabitEthernet1/1/24": {NeighborHostname: "myswcm37", NeighborDeviceID: "myswcm37", LocalInterface: "TenGigabitEthernet1/1/24", RemoteInterface: "TenGigabitEthernet1/1/2"},
+		"TenGigabitEthernet2/1/24": {NeighborHostname: "myswcm37", NeighborDeviceID: "myswcm37", LocalInterface: "TenGigabitEthernet2/1/24", RemoteInterface: "TenGigabitEthernet2/1/2"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mismatch:\n got=%v\nwant=%v", got, want)

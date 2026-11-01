@@ -36,6 +36,20 @@ type linkReasonResult struct {
 	intHost    string
 }
 
+// sviSeenUpdate — изменение метки видимости MAC на VLAN коммутатора за запуск.
+type sviSeenUpdate struct {
+	switchID string
+	vlanID   int
+	hasMac   bool
+	now      time.Time
+}
+
+// sviEmptyDelete — ключ SVI, который надо убрать из пустых (VLAN снова занят).
+type sviEmptyDelete struct {
+	switchID string
+	vlanID   int
+}
+
 func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 	log.Printf("[debug] Connecting to switch %s", swName)
 
@@ -155,6 +169,9 @@ func collectDataAndSave() {
 			vlanID   int
 			svi      cisaccs.IntDescSVI
 		}
+		discoveredManaged = make(map[string]bool)
+		sviSeenUpdates    []sviSeenUpdate
+		emptySVIDeletes   []sviEmptyDelete
 	)
 
 	for _, sw := range rootSwitches {
@@ -192,7 +209,18 @@ func collectDataAndSave() {
 
 			vlansWithMacs := vlanSet(res.data.MACs)
 			for _, sv := range res.data.SVIs {
-				if !vlansWithMacs[sv.VlanID] && sv.Status == "up" && sv.Protocol == "up" {
+				if sv.Status != "up" || sv.Protocol != "up" {
+					continue
+				}
+				now := time.Now()
+				if vlansWithMacs[sv.VlanID] {
+					// VLAN занят динамическим MAC — обновляем метку видимости и
+					// убираем SVI из пустых, если был помечен.
+					sviSeenUpdates = append(sviSeenUpdates, sviSeenUpdate{switchID: res.data.SwitchName, vlanID: sv.VlanID, hasMac: true, now: now})
+					emptySVIDeletes = append(emptySVIDeletes, sviEmptyDelete{switchID: res.data.SwitchName, vlanID: sv.VlanID})
+				} else {
+					// Кандидат в пустые: метка видимости, время первого наблюдения.
+					sviSeenUpdates = append(sviSeenUpdates, sviSeenUpdate{switchID: res.data.SwitchName, vlanID: sv.VlanID, hasMac: false, now: now})
 					emptySVIs = append(emptySVIs, struct {
 						switchID string
 						vlanID   int
@@ -206,6 +234,7 @@ func collectDataAndSave() {
 				if !visited[nh] && hostNamesSet[nh] {
 					visited[nh] = true
 					batchNewQueue = append(batchNewQueue, nh)
+					discoveredManaged[nh] = true
 					log.Printf("[debug] Discovered downstream switch %s via CDP on %s (%s)", nh, res.data.SwitchName, neighbor.LocalInterface)
 				}
 			}
@@ -215,9 +244,27 @@ func collectDataAndSave() {
 		queue = batchNewQueue
 	}
 
-	for _, svi := range emptySVIs {
-		if err := saveEmptySVI(svi.switchID, svi.vlanID, []cisaccs.IntDescSVI{svi.svi}); err != nil {
+	// Применяем метки видимости MAC по VLAN единым транктом (из BFS).
+	if err := applySVISeenUpdates(sviSeenUpdates); err != nil {
+		log.Printf("Error applying SVI seen tracking: %v", err)
+	}
+
+	// Помечаем пустыми только те SVI, что без MAC уже больше месяца.
+	var confirmedEmpty int
+	for _, e := range emptySVIs {
+		if !sviIsEmptyConfirmed(e.switchID, e.vlanID, time.Now()) {
+			continue
+		}
+		if err := saveEmptySVI(e.switchID, e.vlanID, []cisaccs.IntDescSVI{e.svi}); err != nil {
 			log.Printf("Error saving empty SVI: %v", err)
+			continue
+		}
+		confirmedEmpty++
+	}
+	// Убираем из пустых VLAN, которые вновь заняты динамическим MAC.
+	for _, d := range emptySVIDeletes {
+		if err := deleteEmptySVI(d.switchID, d.vlanID); err != nil {
+			log.Printf("Error deleting empty SVI: %v", err)
 		}
 	}
 
@@ -374,6 +421,26 @@ func collectDataAndSave() {
 		log.Printf("Error batch writing MAC records: %v", err)
 	}
 
+	// Топология: снимок CDP-соседей каждого коммутатора (перезаписывается).
+	scannedSet := make(map[string]bool, len(allCollected))
+	for _, d := range allCollected {
+		scannedSet[d.SwitchName] = true
+		if err := saveTopologySwitch(buildTopology(d, hostNamesSet)); err != nil {
+			log.Printf("Error saving topology for %s: %v", d.SwitchName, err)
+		}
+	}
+	// В управляемую область считаем и сканируемые, и объявленные соседями в CDP.
+	knownNow := make(map[string]bool, len(scannedSet)+len(discoveredManaged))
+	for k := range scannedSet {
+		knownNow[k] = true
+	}
+	for k := range discoveredManaged {
+		knownNow[k] = true
+	}
+	if err := reconcileTopology(knownNow); err != nil {
+		log.Printf("Error reconciling topology: %v", err)
+	}
+
 	fmt.Printf("\n=== MAC Collection Summary ===\n")
 	fmt.Printf("Switches collected: %d\n", len(allCollected))
 	var totalParsed int
@@ -382,7 +449,7 @@ func collectDataAndSave() {
 	}
 	fmt.Printf("Total parsed MAC entries (all switches): %d\n", totalParsed)
 	fmt.Printf("Unique MACs found: %d\n", totalMacs)
-	fmt.Printf("Empty SVIs detected: %d\n", len(emptySVIs))
+	fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, confirmedEmpty)
 	fmt.Printf("New MACs: %d\n", newCount)
 	fmt.Printf("Changed MACs: %d\n", changeCount)
 	fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
