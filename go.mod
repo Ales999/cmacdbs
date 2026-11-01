@@ -3,7 +3,7 @@ module github.com/ales999/cmacdbs
 go 1.26.9
 
 require (
-	github.com/ales999/cisaccs/v2 v2.0.0-20261029230044-1838d3c9db60
+	github.com/ales999/cisaccs/v2 v2.0.0-20261031164104-b3b500c58d8e
 	go.etcd.io/bbolt v1.5.0
 )
 
