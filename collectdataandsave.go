@@ -449,6 +449,7 @@ func collectDataAndSave() {
 	}
 	fmt.Printf("Total parsed MAC entries (all switches): %d\n", totalParsed)
 	fmt.Printf("Unique MACs found: %d\n", totalMacs)
+	fmt.Printf("Empty SVIs candidate (empty <%dd): %d\n", emptySVIDays, len(emptySVIs))
 	fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, confirmedEmpty)
 	fmt.Printf("New MACs: %d\n", newCount)
 	fmt.Printf("Changed MACs: %d\n", changeCount)
