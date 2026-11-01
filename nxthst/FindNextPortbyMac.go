@@ -1,4 +1,4 @@
-﻿package nxthst
+package nxthst
 
 import (
 	"strings"

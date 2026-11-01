@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"encoding/json"
@@ -152,35 +152,67 @@ func searchMac(raw string) {
 		return
 	}
 
+	// Ключи в БД создаётся macToKey — он убирает только «:», но оставляет «» и
+	// «-». Поэтому один и тот же MAC может храниться в разных видах (без
+	// разделителя, в точках, в тире). Ищем по всем возможным формам ключа.
+	keys := macCandidateKeys(key)
+	debugf("candidate keys for %q: %v", raw, keys)
+
 	// Первоочередной вариант — полноценная запись с историей перемещений.
-	if rec, err := loadMacRecord(key); err != nil {
-		fmt.Printf("Ошибка чтения БД: %v\n", err)
-		return
-	} else if rec.Current.SwitchID != "" || len(rec.History) > 0 {
-		fmt.Printf("MAC %s\n", formatMAC(key))
-		if rec.Current.SwitchID != "" {
-			fmt.Printf("  Сейчас:     %s / %s (%s)\n", rec.Current.SwitchID, rec.Current.Port, ts(rec.Current.Timestamp))
+	for _, k := range keys {
+		if rec, err := loadMacRecord(k); err != nil {
+			fmt.Printf("Ошибка чтения БД: %v\n", err)
+			return
+		} else if rec.Current.SwitchID != "" || len(rec.History) > 0 {
+			debugf("matched MacHistory via key %q", k)
+			fmt.Printf("MAC %s\n", formatMAC(key))
+			if rec.Current.SwitchID != "" {
+				fmt.Printf("  Сейчас:     %s / %s (%s)\n", rec.Current.SwitchID, rec.Current.Port, ts(rec.Current.Timestamp))
+			}
+			for i, h := range rec.History {
+				fmt.Printf("  История %d:  %s / %s (%s)\n", i+1, h.SwitchID, h.Port, ts(h.Timestamp))
+			}
+			return
 		}
-		for i, h := range rec.History {
-			fmt.Printf("  История %d:  %s / %s (%s)\n", i+1, h.SwitchID, h.Port, ts(h.Timestamp))
-		}
-		return
 	}
 
 	// MAC нет в MacHistory — проверим «не найденных» (линк за пределами области).
-	if unf, err := loadUnfoundMAC(key); err != nil {
-		fmt.Printf("Ошибка чтения БД: %v\n", err)
-		return
-	} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
-		fmt.Printf("MAC %s\n", formatMAC(key))
-		fmt.Printf("  Статус:     не резолётся в конечную точку (reason=%s)\n", unf.Reason)
-		if unf.LastSwitch != "" {
-			fmt.Printf("  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
+	for _, k := range keys {
+		if unf, err := loadUnfoundMAC(k); err != nil {
+			fmt.Printf("Ошибка чтения БД: %v\n", err)
+			return
+		} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
+			debugf("matched UnfoundMAC via key %q", k)
+			fmt.Printf("MAC %s\n", formatMAC(key))
+			fmt.Printf("  Статус:     не резолётся в конечную точку (reason=%s)\n", unf.Reason)
+			if unf.LastSwitch != "" {
+				fmt.Printf("  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
+			}
+			return
 		}
-		return
 	}
 
 	fmt.Printf("MAC %s не найден в базе\n", formatMAC(key))
+}
+
+// macCandidateKeys возвращает все формы ключа, в которых один и тот же MAC
+// (в каноническом виде — 12 hex без разделителей) может храниться в БД. macToKey
+// убирает только «:», поэтому в ключах встречаются формы без разделителя,
+// в точках и тире (cisco-нотация группирует по 4 символа: 4cbd.8f73.d94d) —
+// все их и проверяем.
+func macCandidateKeys(canonical string) []string {
+	forms := []string{canonical}
+	for _, sep := range []string{".", "-"} {
+		var b strings.Builder
+		for i := 0; i < len(canonical); i += 4 {
+			if i > 0 {
+				b.WriteString(sep)
+			}
+			b.WriteString(canonical[i : i+4])
+		}
+		forms = append(forms, b.String())
+	}
+	return forms
 }
 
 // normalizeMAC приводит строку к каноническому MAC-ключу (hex, нижний регистр,
