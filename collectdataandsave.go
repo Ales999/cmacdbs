@@ -296,7 +296,7 @@ func collectDataAndSave() {
 	macInfos := make(map[string]*macInfo)
 	for _, data := range allCollected {
 		for _, m := range data.MACs {
-			// Ключ нормализуем через macToKey (верхний регистр, без двоеточий),
+			// Ключ нормализуем через macToKey (нижний регистр, без двоеточий),
 			// иначе один и тот же MAC в разном регистре на разных платформах
 			// (4500 — строчный, 9k/9500 — прописной) посчитается за два разных.
 			macAddr := macToKey(m.GetMac())

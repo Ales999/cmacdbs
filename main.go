@@ -122,7 +122,7 @@ func getPasswdFile() string {
 }
 
 func macToKey(mac string) string {
-	return strings.ReplaceAll(strings.ToUpper(mac), ":", "")
+	return strings.ReplaceAll(strings.ToLower(mac), ":", "")
 }
 
 // portIsLink определяет, является ли порт линком (агрегацией/транком) к другому
