@@ -184,7 +184,7 @@ func searchMac(raw string) {
 		} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
 			debugf("matched UnfoundMAC via key %q", k)
 			fmt.Printf("MAC %s\n", formatMAC(key))
-			fmt.Printf("  Статус:     не резолётся в конечную точку (reason=%s)\n", unf.Reason)
+			fmt.Printf("  Статус:     не резолвится в конечную точку (reason=%s)\n", unf.Reason)
 			if unf.LastSwitch != "" {
 				fmt.Printf("  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
 			}
