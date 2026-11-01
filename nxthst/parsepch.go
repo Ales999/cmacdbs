@@ -55,6 +55,9 @@ func parseprtch(txtlines []string) []PrtChlInfo {
 			cuttingGroupByTree := strings.FieldsFunc(line, func(r rune) bool {
 				return r == ' '
 			})
+			if len(cuttingGroupByTree) < 2 {
+				continue
+			}
 
 			var tmpgrprts []string // группа портов в данном ether-channel
 
@@ -70,10 +73,13 @@ func parseprtch(txtlines []string) []PrtChlInfo {
 				if !strings.HasPrefix(plst, "Port:") {
 					break
 				}
-				// Парсим строку - разложим по частям
+				// Парсим строку - разложим по частям. "Port: Twe1/0/1" -> минимум 2 поля.
 				cuttingPortsByTree := strings.FieldsFunc(plst, func(r rune) bool {
 					return r == ' '
 				})
+				if len(cuttingPortsByTree) < 2 {
+					continue
+				}
 
 				tmpgrprts = append(tmpgrprts, ConvertLongIfaceName(cuttingPortsByTree[1]))
 

@@ -81,9 +81,9 @@ type SwitchMACData struct {
 }
 
 type CDPNeighbor struct {
-	NeighborHostname  string
-	NeighborDeviceID  string
-	LocalInterface    string
+	NeighborHostname string
+	NeighborDeviceID string
+	LocalInterface   string
 	// RemoteInterface — исходящий порт соседа («Port ID (outgoing port)»).
 	// Нужен для постройки топологии: вместе с LocalInterface даёт полное
 	// описание ребра «наш-порт -> чужой-порт» без обращения к записи соседа.
@@ -125,6 +125,15 @@ func main() {
 	}
 	defer db.Close()
 
+	// Одноразовая миграция дублей ключей MAC: старые записи могли храниться под
+	// ключами в разных формах (с «:», «-», «.» и без разделителей), потому что
+	// macToKey раньше оставлял «.» и «-». Функция идемпотентна — на уже
+	// нормализованной базе делает ноль. Ошибка здесь не критична: поиск и сбор
+	// продолжат работу.
+	if err := migrateMacDB(); err != nil {
+		log.Printf("Warning: mac key migration failed: %v", err)
+	}
+
 	// Если указан -s, ищем переданный MAC вместо заполнения базы.
 	if strings.TrimSpace(cli.SearchMAC) != "" {
 		searchMac(cli.SearchMAC)
@@ -152,17 +161,17 @@ func searchMac(raw string) {
 		return
 	}
 
-	// Ключи в БД создаётся macToKey — он убирает только «:», но оставляет «» и
-	// «-». Поэтому один и тот же MAC может храниться в разных видах (без
-	// разделителя, в точках, в тире). Ищем по всем возможным формам ключа.
+	// После миграции все ключи в БД канонические (macToKey убирает «:», «-», «»
+	// и приводит к нижнему регистру), поэтому совпадает первая форма. macCandidateKeys
+	// оставлены как defensive-мера на случай немиграрованных данных.
 	keys := macCandidateKeys(key)
 	debugf("candidate keys for %q: %v", raw, keys)
 
 	// Первоочередной вариант — полноценная запись с историей перемещений.
 	for _, k := range keys {
 		if rec, err := loadMacRecord(k); err != nil {
-			fmt.Printf("Ошибка чтения БД: %v\n", err)
-			return
+			debugf("error reading MacHistory via key %q: %v", k, err)
+			continue
 		} else if rec.Current.SwitchID != "" || len(rec.History) > 0 {
 			debugf("matched MacHistory via key %q", k)
 			fmt.Printf("MAC %s\n", formatMAC(key))
@@ -179,8 +188,8 @@ func searchMac(raw string) {
 	// MAC нет в MacHistory — проверим «не найденных» (линк за пределами области).
 	for _, k := range keys {
 		if unf, err := loadUnfoundMAC(k); err != nil {
-			fmt.Printf("Ошибка чтения БД: %v\n", err)
-			return
+			debugf("error reading UnfoundMAC via key %q: %v", k, err)
+			continue
 		} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
 			debugf("matched UnfoundMAC via key %q", k)
 			fmt.Printf("MAC %s\n", formatMAC(key))
@@ -195,11 +204,11 @@ func searchMac(raw string) {
 	fmt.Printf("MAC %s не найден в базе\n", formatMAC(key))
 }
 
-// macCandidateKeys возвращает все формы ключа, в которых один и тот же MAC
-// (в каноническом виде — 12 hex без разделителей) может храниться в БД. macToKey
-// убирает только «:», поэтому в ключах встречаются формы без разделителя,
-// в точках и тире (cisco-нотация группирует по 4 символа: 4cbd.8f73.d94d) —
-// все их и проверяем.
+// macCandidateKeys возвращает формы ключа, в которых один и тот же MAC (в
+// каноническом виде — 12 hex без разделителей) теоретически может храниться в
+// БД. cisco-нотация группирует по 4 символа: 4cbd.8f73.d94d, тире: 4cbd-8f73-d94d.
+// После миграции ключи канонические, поэтому совпадает первая форма; остальное —
+// defensive-мера.
 func macCandidateKeys(canonical string) []string {
 	forms := []string{canonical}
 	for _, sep := range []string{".", "-"} {
@@ -274,8 +283,185 @@ func getPasswdFile() string {
 	return "groups.yaml"
 }
 
+// macToKey приводит MAC к каноническому виду ключа БД: 12 hex-символов нижнего
+// регистра без любых разделителей («:», «-», «», пробел). Раньше убирались только
+// «:», из-за чего один и тот же MAC попадал в MacHistory под ключами в разных
+// формах (дубли, сломанная история). Миграция migrateMacKeys сводит уже
+// существующие дубли к одному ключу.
 func macToKey(mac string) string {
-	return strings.ReplaceAll(strings.ToLower(mac), ":", "")
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ':', '-', '.', ' ':
+			return -1
+		}
+		return r
+	}, strings.ToLower(mac))
+}
+
+// migrateMacDB одноразово сводит дубли ключей MAC в обоих бакетах к каноническому
+// виду. Идемпотентна: на уже нормализованной базе делает ноль. Возвращает первую
+// из возникших ошибок (если есть).
+func migrateMacDB() error {
+	var err error
+	if e := migrateMacKeys(); e != nil && err == nil {
+		err = e
+	}
+	if e := migrateUnfoundKeys(); e != nil && err == nil {
+		err = e
+	}
+	return err
+}
+
+// migrateMacKeys сводит дубли ключей в MacHistory: записи, у которых macToKey(key)
+// даёт один и тот же канонический ключ (например 0e55.6c89.a819,
+// 0e55-6c89-a819 и 0e556c89a819), объединяются в одну запись под каноническим
+// ключом, старые ключи удаляются.
+func migrateMacKeys() error {
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			return nil
+		}
+		merged := make(map[string]*MacRecord)
+		var order []string
+		keysToDelete := make([][]byte, 0)
+		if err := b.ForEach(func(k, v []byte) error {
+			canon := macToKey(string(k))
+			var rec MacRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return err
+			}
+			if ex, ok := merged[canon]; ok {
+				*ex = mergeMacRecords(*ex, rec)
+			} else {
+				cp := rec
+				merged[canon] = &cp
+				order = append(order, canon)
+			}
+			if string(k) != canon {
+				keysToDelete = append(keysToDelete, []byte(k))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range keysToDelete {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		for _, canon := range order {
+			data, err := json.Marshal(merged[canon])
+			if err != nil {
+				return err
+			}
+			if err := b.Put([]byte(canon), data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// mergeMacRecords объединяет две записи одного и того же MAC: берёт более свежее
+// текущее место нахождения и объединяет историю, отбрасывая дубли (switch,port).
+func mergeMacRecords(a, b MacRecord) MacRecord {
+	if b.Current.Timestamp.After(a.Current.Timestamp) {
+		a, b = b, a
+	}
+	seen := make(map[string]bool)
+	var hist []Visit
+	for _, r := range []MacRecord{a, b} {
+		for _, h := range r.History {
+			if h.SwitchID == "" && h.Port == "" {
+				continue
+			}
+			kk := h.SwitchID + "|" + h.Port
+			if seen[kk] {
+				continue
+			}
+			seen[kk] = true
+			hist = append(hist, h)
+		}
+	}
+	if len(hist) > 3 {
+		hist = hist[:3]
+	}
+	return MacRecord{MacAddress: a.MacAddress, Current: a.Current, History: hist}
+}
+
+// migrateUnfoundKeys сводит дубли ключей в UnfoundMAC к каноническому виду
+// аналогично migrateMacKeys (сохраняя минимальный FirstSeen и максимальный
+// LastSeen).
+func migrateUnfoundKeys() error {
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(unfoundBucket)
+		if b == nil {
+			return nil
+		}
+		merged := make(map[string]*UnfoundRecord)
+		var order []string
+		keysToDelete := make([][]byte, 0)
+		if err := b.ForEach(func(k, v []byte) error {
+			canon := macToKey(string(k))
+			var rec UnfoundRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return err
+			}
+			if ex, ok := merged[canon]; ok {
+				*ex = mergeUnfoundRecords(*ex, rec)
+			} else {
+				cp := rec
+				merged[canon] = &cp
+				order = append(order, canon)
+			}
+			if string(k) != canon {
+				keysToDelete = append(keysToDelete, []byte(k))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range keysToDelete {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		for _, canon := range order {
+			data, err := json.Marshal(merged[canon])
+			if err != nil {
+				return err
+			}
+			if err := b.Put([]byte(canon), data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// mergeUnfoundRecords объединяет две записи UnfoundMAC одного MAC: минимальный
+// FirstSeen, максимальный LastSeen, заполняет пустые поля из второй записи.
+func mergeUnfoundRecords(a, b UnfoundRecord) UnfoundRecord {
+	if b.FirstSeen.Before(a.FirstSeen) {
+		a.FirstSeen = b.FirstSeen
+	}
+	if b.LastSeen.After(a.LastSeen) {
+		a.LastSeen = b.LastSeen
+	}
+	if a.Neighbor == "" {
+		a.Neighbor = b.Neighbor
+	}
+	if a.Reason == "" {
+		a.Reason = b.Reason
+	}
+	if a.LastSwitch == "" {
+		a.LastSwitch = b.LastSwitch
+	}
+	if a.LastPort == "" {
+		a.LastPort = b.LastPort
+	}
+	return a
 }
 
 // portIsLink определяет, является ли порт линком (агрегацией/транком) к другому
@@ -288,9 +474,13 @@ func portIsLink(iface string) bool {
 			return true
 		}
 	}
-	// Короткая форма Cisco для Port-Channel — «Po» (ни один тип physical-порта
-	// не начинается на «po»).
-	return strings.HasPrefix(li, "po")
+	// Короткая форма Cisco для Port-Channel — «Po» + номер (Po14, Po1/0/14).
+	// Требование цифры после «po» защищает от ложных совпадений (например
+	// гипотетические policy…).
+	if strings.HasPrefix(li, "po") && len(li) > 2 && li[2] >= '0' && li[2] <= '9' {
+		return true
+	}
+	return false
 }
 
 func vlanSet(macs []cisaccs.MacLineData) map[int]bool {
@@ -302,24 +492,6 @@ func vlanSet(macs []cisaccs.MacLineData) map[int]bool {
 		}
 	}
 	return s
-}
-
-func saveMacRecord(macAddr string, rec MacRecord) error {
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	return db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		if b == nil {
-			_, err = tx.CreateBucket(bucketName)
-			if err != nil {
-				return err
-			}
-			b = tx.Bucket(bucketName)
-		}
-		return b.Put([]byte(macToKey(macAddr)), data)
-	})
 }
 
 func loadMacRecord(macAddr string) (*MacRecord, error) {
@@ -377,7 +549,8 @@ func saveUnfoundMAC(macAddr string, rec UnfoundRecord) error {
 			}
 			return b.Put(key, data)
 		}
-		// MAC уже есть — обновляем только LastSeen, остальное не трогаем.
+		// MAC уже есть — обновляем LastSeen/LastSwitch/LastPort и, если
+		// классификация изменилась, Reason/Neighbor (например external -> internal).
 		var cur UnfoundRecord
 		if err := json.Unmarshal(existing, &cur); err != nil {
 			return err
@@ -389,6 +562,12 @@ func saveUnfoundMAC(macAddr string, rec UnfoundRecord) error {
 		if rec.LastPort != "" {
 			cur.LastPort = rec.LastPort
 		}
+		if rec.Reason != "" {
+			cur.Reason = rec.Reason
+		}
+		if rec.Neighbor != "" {
+			cur.Neighbor = rec.Neighbor
+		}
 		data, err := json.Marshal(cur)
 		if err != nil {
 			return err
@@ -397,29 +576,23 @@ func saveUnfoundMAC(macAddr string, rec UnfoundRecord) error {
 	})
 }
 
-func saveEmptySVI(switchID string, vlanID int, svis []cisaccs.IntDescSVI) error {
-	for _, sv := range svis {
-		if sv.Status != "up" || sv.Protocol != "up" {
-			continue
-		}
-		key := fmt.Sprintf("%s_%04d", switchID, vlanID)
-		rec := SVIRecord{SwitchID: switchID, VlanID: sv.VlanID, Description: sv.Description}
-		data, err := json.Marshal(rec)
-		if err != nil {
-			return err
-		}
-		err = db.Update(func(tx *bbolt.Tx) error {
-			b, err := tx.CreateBucketIfNotExists(emptyBucketName)
-			if err != nil {
-				return err
-			}
-			return b.Put([]byte(key), data)
-		})
-		if err != nil {
-			return err
-		}
+func saveEmptySVI(switchID string, vlanID int, svi cisaccs.IntDescSVI) error {
+	if svi.Status != "up" || svi.Protocol != "up" {
+		return nil
 	}
-	return nil
+	key := fmt.Sprintf("%s_%04d", switchID, vlanID)
+	rec := SVIRecord{SwitchID: switchID, VlanID: svi.VlanID, Description: svi.Description}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(emptyBucketName)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(key), data)
+	})
 }
 
 // deleteEmptySVI убирает SVI из списка пустых (например, VLAN снова занялся MAC).
@@ -517,10 +690,10 @@ func parseCDPNeighbors(lines []string) map[string]CDPNeighbor {
 				continue
 			}
 			result[localIface] = CDPNeighbor{
-				NeighborHostname:  strings.ToLower(deviceID),
-				NeighborDeviceID:  deviceID,
-				LocalInterface:    localIface,
-				RemoteInterface:   remoteIface,
+				NeighborHostname: strings.ToLower(deviceID),
+				NeighborDeviceID: deviceID,
+				LocalInterface:   localIface,
+				RemoteInterface:  remoteIface,
 			}
 			deviceID = ""
 		}

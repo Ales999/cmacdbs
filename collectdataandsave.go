@@ -103,7 +103,7 @@ func linkMACReason(linkLocs []macLocation, cdpLinesBySwitch map[string][]string,
 		if v, ok := cache[key]; ok {
 			return v, ""
 		}
-		found, remote := nxthst.FindNextPortbyMac(cdpLinesBySwitch[loc.switchName], loc.switchName, *nxthst.NewLocMacLineData("", "", loc.iface))
+		found, remote := nxthst.FindNextPortbyMac(cdpLinesBySwitch[loc.switchName], nxthst.NewLocMacLineData("", "", loc.iface))
 		managed := found && hostNamesSet[strings.ToLower(remote)]
 		if debugCount < 15 {
 			debugf("link-only %s/%s -> CDP found=%v host=%q managed=%v", loc.switchName, loc.iface, found, remote, managed)
@@ -255,7 +255,7 @@ func collectDataAndSave() {
 		if !sviIsEmptyConfirmed(e.switchID, e.vlanID, time.Now()) {
 			continue
 		}
-		if err := saveEmptySVI(e.switchID, e.vlanID, []cisaccs.IntDescSVI{e.svi}); err != nil {
+		if err := saveEmptySVI(e.switchID, e.vlanID, e.svi); err != nil {
 			log.Printf("Error saving empty SVI: %v", err)
 			continue
 		}
@@ -296,9 +296,10 @@ func collectDataAndSave() {
 	macInfos := make(map[string]*macInfo)
 	for _, data := range allCollected {
 		for _, m := range data.MACs {
-			// Ключ нормализуем через macToKey (нижний регистр, без двоеточий),
-			// иначе один и тот же MAC в разном регистре на разных платформах
-			// (4500 — строчный, 9k/9500 — прописной) посчитается за два разных.
+			// Ключ нормализуем через macToKey (нижний регистр, без любых
+			// разделителей — «:», «-», «», пробел), иначе один и тот же MAC в
+			// разных форматах на разных платформах (4500 — 0e55.6c89.a819,
+			// 9k/9500 — f4339234d502) посчитается за два разных.
 			macAddr := macToKey(m.GetMac())
 			loc := macLocation{switchName: data.SwitchName, iface: m.GetIface()}
 			info, exists := macInfos[macAddr]

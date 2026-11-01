@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// reNexus вырезает серийный номер в скобках у hostname nexus-платформ
+// (nexus5548_1(SDI15620DSC) --> nexus5548_1). Паттерн статичный — компилируем один раз.
+var reNexus = regexp.MustCompile(`^([^(]+)(\(\S+)$`)
+
 type CdpLineData struct {
 	Remname string
 	Locface string
@@ -32,11 +36,19 @@ func parsecdp(txtlines []string) []CdpLineData {
 
 		if strings.HasPrefix(line, "Device ID") {
 
+			// Нужна как минимум следующая строка с интерфейсом.
+			if n+1 >= len(txtlines) {
+				continue
+			}
+
 			// Созданим новый срез из текущей и следующей строки
 			tlsts := txtlines[n : n+2]
 
 			if len(tlsts) > 1 && strings.HasPrefix(tlsts[1], "Interface:") && strings.Contains(tlsts[1], "outgoing port") {
 				cdpinfo := parseCdpLine(line, tlsts[1])
+				if cdpinfo == (CdpLineData{}) {
+					continue
+				}
 
 				// print debug
 				//fmt.Println(cdpinfo.Remname, cdpinfo.Locface, cdpinfo.Remface)
@@ -68,7 +80,7 @@ func parseCdpLine(idline string, ifacesline string) CdpLineData {
 	cuttingIdLine := strings.FieldsFunc(idline, func(r rune) bool {
 		return r == ' '
 	})
-	if len(cuttingIdLine[2]) == 0 {
+	if len(cuttingIdLine) < 3 || cuttingIdLine[2] == "" {
 		return CdpLineData{}
 	}
 
@@ -77,8 +89,7 @@ func parseCdpLine(idline string, ifacesline string) CdpLineData {
 	// Если имя хоста содержит скобки с серийным номером (output cisco nexus this)
 	if strings.ContainsRune(hostname, '(') && strings.ContainsRune(hostname, ')') {
 		// Example: nexus5548_1(SDI15620DSC) --> nexus5548_1
-		re, _ := regexp.Compile(`^([^(]+)(\(\S+)$`)
-		res := re.FindStringSubmatch(hostname)
+		res := reNexus.FindStringSubmatch(hostname)
 		if len(res) > 0 {
 			hostname = res[1]
 		}
@@ -92,12 +103,17 @@ func parseCdpLine(idline string, ifacesline string) CdpLineData {
 		hostname = cuttingOnlyName[0]
 	}
 
-	// Парсим строку Interfaces - разложим по частям
+	// Парсим строку Interfaces - разложим по частям.
+	// Ожидаем минимум 7 полей: "Interface:", локальный порт, "Port", "ID",
+	// "(outgoing", "port):", удалённый порт.
 	cuttingIfaces := strings.FieldsFunc(ifacesline, func(r rune) bool {
 		return r == ' '
 	})
+	if len(cuttingIfaces) < 7 {
+		return CdpLineData{}
+	}
 	// Удалим последнюю запятую из имени локального интерфейса, если она есть.
-	var lociface = strings.TrimSuffix(cuttingIfaces[1], ",") //  TrimEndSuffix(cuttingIfaces[1], ",")
+	var lociface = strings.TrimSuffix(cuttingIfaces[1], ",") // TrimEndSuffix(cuttingIfaces[1], ",")
 
 	return *NewCdpLineData(hostname, ConvertLongIfaceName(lociface), ConvertLongIfaceName(cuttingIfaces[6]))
 

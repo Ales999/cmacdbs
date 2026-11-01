@@ -44,7 +44,7 @@ func TestFindNextPortbyMacIntegration(t *testing.T) {
 		{"TenGigabitEthernet1/1/4", true, "myswcm37"},
 	}
 	for _, c := range cases {
-		found, host := nxthst.FindNextPortbyMac(filtered, "swA", *nxthst.NewLocMacLineData("", "", c.iface))
+		found, host := nxthst.FindNextPortbyMac(filtered, nxthst.NewLocMacLineData("", "", c.iface))
 		if found != c.wantFound || host != c.wantHost {
 			t.Errorf("iface %q: got found=%v host=%q, want found=%v host=%q", c.iface, found, host, c.wantFound, c.wantHost)
 		}

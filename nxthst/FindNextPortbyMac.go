@@ -23,7 +23,7 @@ func NewLocMacLineData(
 	}
 }
 
-func FindNextPortbyMac(txtlines []string, currhost string, fmi LocMacLineData) (bool, string) {
+func FindNextPortbyMac(txtlines []string, fmi *LocMacLineData) (bool, string) {
 
 	// Найденный интерфейс на текущем хосте
 	curriface := ConvertLongIfaceName(fmi.iface)
@@ -38,8 +38,6 @@ func FindNextPortbyMac(txtlines []string, currhost string, fmi LocMacLineData) (
 
 	// Признак найденного совпадения по CDP
 	var cdpmathfound bool
-
-	//fmt.Println("Current host:", currhost)
 
 	//fmt.Println("Test parsing cisco CDP")
 	cdpinfos = parsecdp(txtlines)
