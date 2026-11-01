@@ -1,14 +1,24 @@
-package main
+﻿package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ales999/cisaccs/v2"
 	"go.etcd.io/bbolt"
 )
 
-// Структуры данных
+var rootSwitches = []string{
+	"switch1",
+	"switch2",
+}
+
 type Visit struct {
 	SwitchID  string    `json:"switch_id"`
 	Port      string    `json:"port"`
@@ -21,11 +31,49 @@ type MacRecord struct {
 	History    []Visit `json:"history"`
 }
 
+type SVIRecord struct {
+	SwitchID    string `json:"switch_id"`
+	VlanID      int    `json:"vlan_id"`
+	Description string `json:"description,omitempty"`
+}
+
+// UnfoundRecord — MAC, который не резолвится в конкретную конечную точку
+// (порт-линк ведёт за пределы управляемой области: сервер, неуправляемое
+// устройство или мультичассис). Хранится как множество уникальных MAC (insert-once).
+type UnfoundRecord struct {
+	MacAddress string    `json:"mac_address"`
+	LastSwitch string    `json:"last_switch"`
+	LastPort   string    `json:"last_port"`
+	Neighbor   string    `json:"neighbor,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	FirstSeen  time.Time `json:"first_seen"`
+	LastSeen   time.Time `json:"last_seen"`
+}
+
+type SwitchMACData struct {
+	SwitchName   string
+	MACs         []cisaccs.MacLineData
+	SVIs         []cisaccs.IntDescSVI
+	CDPNeighbors map[string]CDPNeighbor
+	// CDPLines — суммарный вывод `sh etherchannel detail | i Group:|Port:` и
+	// `sh cdp entry * | i Device|Interface`. Нужен для резолвинга линк-портов
+	// (в т.ч. Port-Channel) до соседнего хоста через nxthst.FindNextPortbyMac.
+	CDPLines []string
+}
+
+type CDPNeighbor struct {
+	NeighborHostname string
+	NeighborDeviceID string
+	LocalInterface   string
+}
+
 var (
-	db         *bbolt.DB
-	bucketName = []byte("MacHistory")
-	isScanning bool       // Флаг, чтобы не запустить сканирование дважды одновременно
-	scanMu     sync.Mutex // Мутекс для защиты флага сканирования
+	db              *bbolt.DB
+	bucketName      = []byte("MacHistory")
+	unfoundBucket   = []byte("UnfoundMAC")
+	emptyBucketName = []byte("EmptySVIs")
+	isScanning      bool
+	scanMu          sync.Mutex
 )
 
 func main() {
@@ -36,7 +84,199 @@ func main() {
 	}
 	defer db.Close()
 
-	// Тут далее наш код
 	collectDataAndSave()
+}
 
+func getHostsFile() string {
+	if v := os.Getenv("CIS2FILE"); v != "" {
+		return v
+	}
+	return "hosts.yaml"
+}
+
+func getPasswdFile() string {
+	if v := os.Getenv("CIS2PWDS"); v != "" {
+		return v
+	}
+	return "groups.yaml"
+}
+
+func macToKey(mac string) string {
+	return strings.ReplaceAll(strings.ToUpper(mac), ":", "")
+}
+
+// portIsLink определяет, является ли порт линком (агрегацией/транком) к другому
+// устройству, а не конечным access-портом. Для таких портов MAC может «переползать»
+// между физическими портами одного bundle, поэтому в качестве точки фиксируем bundle.
+func portIsLink(iface string) bool {
+	li := strings.ToLower(strings.TrimSpace(iface))
+	for _, p := range []string{"port-channel", "portchannel", "eth-trunk", "bundle-ether"} {
+		if strings.HasPrefix(li, p) {
+			return true
+		}
+	}
+	// Короткая форма Cisco для Port-Channel — «Po» (ни один тип physical-порта
+	// не начинается на «po»).
+	return strings.HasPrefix(li, "po")
+}
+
+func vlanSet(macs []cisaccs.MacLineData) map[int]bool {
+	s := make(map[int]bool)
+	for _, m := range macs {
+		v, err := strconv.Atoi(m.GetVlan())
+		if err == nil {
+			s[v] = true
+		}
+	}
+	return s
+}
+
+func saveMacRecord(macAddr string, rec MacRecord) error {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			_, err = tx.CreateBucket(bucketName)
+			if err != nil {
+				return err
+			}
+			b = tx.Bucket(bucketName)
+		}
+		return b.Put([]byte(macToKey(macAddr)), data)
+	})
+}
+
+func loadMacRecord(macAddr string) (*MacRecord, error) {
+	var rec *MacRecord
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			rec = &MacRecord{}
+			return nil
+		}
+		data := b.Get([]byte(macToKey(macAddr)))
+		if data == nil {
+			rec = &MacRecord{}
+			return nil
+		}
+		rec = &MacRecord{}
+		return json.Unmarshal(data, rec)
+	})
+	return rec, err
+}
+
+// saveUnfoundMAC заносит MAC в таблицу «не найденных» только если его там ещё нет
+// (insert-once). При повторном появлении обновляется только LastSeen.
+func saveUnfoundMAC(macAddr string, rec UnfoundRecord) error {
+	key := []byte(macToKey(macAddr))
+	return db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(unfoundBucket)
+		if err != nil {
+			return err
+		}
+		existing := b.Get(key)
+		if existing == nil {
+			rec.FirstSeen = rec.LastSeen
+			data, err := json.Marshal(rec)
+			if err != nil {
+				return err
+			}
+			return b.Put(key, data)
+		}
+		// MAC уже есть — обновляем только LastSeen, остальное не трогаем.
+		var cur UnfoundRecord
+		if err := json.Unmarshal(existing, &cur); err != nil {
+			return err
+		}
+		cur.LastSeen = rec.LastSeen
+		if rec.LastSwitch != "" {
+			cur.LastSwitch = rec.LastSwitch
+		}
+		if rec.LastPort != "" {
+			cur.LastPort = rec.LastPort
+		}
+		data, err := json.Marshal(cur)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, data)
+	})
+}
+
+func saveEmptySVI(switchID string, vlanID int, svis []cisaccs.IntDescSVI) error {
+	for _, sv := range svis {
+		if sv.Status != "up" || sv.Protocol != "up" {
+			continue
+		}
+		key := fmt.Sprintf("%s_%04d", switchID, vlanID)
+		rec := SVIRecord{SwitchID: switchID, VlanID: sv.VlanID, Description: sv.Description}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		err = db.Update(func(tx *bbolt.Tx) error {
+			b, err := tx.CreateBucketIfNotExists(emptyBucketName)
+			if err != nil {
+				return err
+			}
+			return b.Put([]byte(key), data)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseCDPNeighbors парсит вывод «sh cdp neighbors detail» в карту «локальный
+// порт -> сосед». Ключ карты — порт на текущем коммутаторе, значение — ID и
+// hostname обнаруженного соседнего устройства. Строка «Device ID» всегда
+// предваряет строку «Interface» внутри одной записи CDP, поэтому hostname
+// запоминается и привязывается к следующей строке интерфейса.
+func parseCDPNeighbors(lines []string) map[string]CDPNeighbor {
+	result := make(map[string]CDPNeighbor)
+	var deviceID string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		idx := strings.Index(line, ":")
+		if idx <= 0 || idx >= len(line)-1 {
+			continue
+		}
+
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+
+		switch {
+		case strings.Contains(key, "Device ID"):
+			deviceID = strings.TrimSpace(val)
+			if dotIdx := strings.Index(deviceID, "."); dotIdx > 0 {
+				deviceID = deviceID[:dotIdx]
+			}
+		case strings.Contains(key, "Interface") && deviceID != "":
+			localIface := val
+			if p := strings.Index(localIface, "Port ID (outgoing port):"); p > 0 {
+				localIface = localIface[:p]
+			}
+			localIface = strings.TrimSuffix(strings.TrimSpace(localIface), ",")
+			localIface = strings.TrimSpace(localIface)
+			if localIface == "" {
+				continue
+			}
+			result[localIface] = CDPNeighbor{
+				NeighborHostname: strings.ToLower(deviceID),
+				NeighborDeviceID: deviceID,
+				LocalInterface:   localIface,
+			}
+			deviceID = ""
+		}
+	}
+	return result
 }
