@@ -373,7 +373,13 @@ func collectDataAndSave() {
 
 		if endpoint != nil {
 			// MAC найден: конечная точка на access-порту. Записываем в MacHistory.
-			existing, _ := loadMacRecord(macAddr)
+			// Ошибка чтения (напр. таймаут bbolt db.View) не должна ронять программу
+			// на ~50k MAC — берём пустой рекорд, чтобы не дерёнить nil.
+			existing, err := loadMacRecord(macAddr)
+			if err != nil {
+				log.Printf("Error loading MAC record %s: %v", macAddr, err)
+				existing = &MacRecord{}
+			}
 
 			// Привязываем IP-адрес из ARP-таблицы. Таблица MAC-адресов IP не
 			// содержит, поэтому ищем MAC в суммарных ARP-линиях.

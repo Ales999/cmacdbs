@@ -292,6 +292,13 @@ func normalizeIP(ip string) (string, bool) {
 // address-table`. Нужен, чтобы искать MAC в ARP-таблице через
 // cisaccs.CisFindArp (он сравнивает без нормализации разделителей).
 func macToCisco(key string) string {
+	// Ключ должен быть кратен 4 (канонический MAC — 12 hex). Нормальные MAC из
+	// ARP-индекса уже валидированы, но resolveArpIP может передать macToKey от
+	// «битой» строки из MAC-таблицы (ParseMacLine не валидирует длину), иначе
+	// key[i:i+4] упадёт с panic «slice bounds out of range».
+	if len(key)%4 != 0 {
+		return ""
+	}
 	var b strings.Builder
 	for i := 0; i < len(key); i += 4 {
 		if i > 0 {
