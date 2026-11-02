@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/alecthomas/kong v1.17.0
-	github.com/ales999/cisaccs/v2 v2.0.0-20261102000124-8d473d73158c
+	github.com/ales999/cisaccs/v2 v2.0.0
 	go.etcd.io/bbolt v1.5.0
 )
 
