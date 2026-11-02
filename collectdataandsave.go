@@ -347,6 +347,7 @@ func collectDataAndSave() {
 
 	var unfoundCount int
 	var internalCount int
+	var unfoundIpCount int
 
 	for _, macAddr := range macAddrs {
 		info := macInfos[macAddr]
@@ -403,6 +404,12 @@ func collectDataAndSave() {
 			// hosts.yaml) — это internal (роутер/устройство без данных), иначе
 			// external — за пределами сети.
 			reason := linkMACReason(linkLocs, cdpLinesBySwitch, hostNamesSet)
+			// Даже без конечной точки MAC часто резолвится в IP через ARP (напр.
+			// сервер за линком). Сохраняем IP, чтобы он отображался в поиске.
+			ip := resolveArpIP(allArpLines, macAddr)
+			if ip != "" {
+				unfoundIpCount++
+			}
 			if reason.isExternal {
 				unfoundCount++
 				if err := saveUnfoundMAC(macAddr, UnfoundRecord{
@@ -411,6 +418,7 @@ func collectDataAndSave() {
 					LastPort:   reason.extLoc.iface,
 					Neighbor:   reason.extHost,
 					Reason:     "external",
+					IP:         ip,
 					LastSeen:   time.Now(),
 				}); err != nil {
 					log.Printf("Error saving unfound MAC %s: %v", macAddr, err)
@@ -423,6 +431,7 @@ func collectDataAndSave() {
 					LastPort:   reason.intLoc.iface,
 					Neighbor:   reason.intHost,
 					Reason:     "internal",
+					IP:         ip,
 					LastSeen:   time.Now(),
 				}); err != nil {
 					log.Printf("Error saving internal MAC %s: %v", macAddr, err)
@@ -483,6 +492,7 @@ func collectDataAndSave() {
 	fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
 	fmt.Printf("Unfound MACs (link leads outside): %d\n", unfoundCount)
 	fmt.Printf("Internal/interface MACs (port not found): %d\n", internalCount)
+	fmt.Printf("Unfound MACs with IP resolved: %d\n", unfoundIpCount)
 	fmt.Printf("Endpoint MACs with IP resolved: %d\n", ipCount)
 	if len(emptySVIs) > 0 {
 		fmt.Printf("---\nEmpty SVIs (no MACs):\n")

@@ -66,6 +66,7 @@ type UnfoundRecord struct {
 	LastPort   string    `json:"last_port"`
 	Neighbor   string    `json:"neighbor,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
+	IP         string    `json:"ip,omitempty"`
 	FirstSeen  time.Time `json:"first_seen"`
 	LastSeen   time.Time `json:"last_seen"`
 }
@@ -196,6 +197,9 @@ func searchByMAC(raw string) string {
 			var b strings.Builder
 			fmt.Fprintf(&b, "MAC %s\n", formatMAC(key))
 			fmt.Fprintf(&b, "  Статус:     не резолвится в конечную точку (reason=%s)\n", unf.Reason)
+			if unf.IP != "" {
+				fmt.Fprintf(&b, "  IP:         %s\n", unf.IP)
+			}
 			if unf.LastSwitch != "" {
 				fmt.Fprintf(&b, "  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
 			}
@@ -507,6 +511,9 @@ func saveUnfoundMAC(macAddr string, rec UnfoundRecord) error {
 		}
 		if rec.Neighbor != "" {
 			cur.Neighbor = rec.Neighbor
+		}
+		if rec.IP != "" {
+			cur.IP = rec.IP
 		}
 		data, err := json.Marshal(cur)
 		if err != nil {
