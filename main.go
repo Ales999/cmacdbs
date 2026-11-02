@@ -211,40 +211,74 @@ func searchByMAC(raw string) string {
 	return fmt.Sprintf("MAC %s не найден в базе", formatMAC(key))
 }
 
-// searchByIP ищет MAC по привязанному IP-адресу в MacHistory и формирует
-// текст отчёта. Вторичного индекса по IP нет, поэтому бакет MacHistory
-// перебирается полностью (размер порядка тысяч записей — для одиночного
-// поиска в CLI приемлемо).
+// searchByIP ищет MAC по привязанному IP-адресу в MacHistory и UnfoundMAC и
+// формирует текст отчёта. Вторичного индекса по IP нет, поэтому оба бакета
+// перебираются полностью (размер порядка тысяч записей — для одиночного
+// поиска в CLI приемлемо). IP хранится и у конечных точек (MacHistory), и у
+// «не найденных» MAC (UnfoundMAC — линк за пределами области, но ARP-привязка
+// на коммутаторе есть), поэтому ищем в обоих. Приоритет — запись с историей.
 func searchByIP(canonicalIP string) string {
-	var rec *MacRecord
+	var macRec *MacRecord
+	var unfRec *UnfoundRecord
 	found := false
 	err := db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		if b == nil {
-			return nil
+		// MacHistory — первичный вариант с историей перемещений.
+		if b := tx.Bucket(bucketName); b != nil {
+			if err := b.ForEach(func(_k, v []byte) error {
+				if found {
+					return nil
+				}
+				var r MacRecord
+				if err := json.Unmarshal(v, &r); err != nil {
+					return nil
+				}
+				if strings.EqualFold(strings.TrimSpace(r.IP), canonicalIP) {
+					macRec = &r
+					found = true
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
-		return b.ForEach(func(_k, v []byte) error {
-			if found {
-				return nil
+		// UnfoundMAC — проверяем, только если IP ещё не нашли в MacHistory.
+		if !found {
+			if b := tx.Bucket(unfoundBucket); b != nil {
+				return b.ForEach(func(_k, v []byte) error {
+					var r UnfoundRecord
+					if err := json.Unmarshal(v, &r); err != nil {
+						return nil
+					}
+					if strings.EqualFold(strings.TrimSpace(r.IP), canonicalIP) {
+						unfRec = &r
+						found = true
+					}
+					return nil
+				})
 			}
-			var r MacRecord
-			if err := json.Unmarshal(v, &r); err != nil {
-				return nil
-			}
-			if strings.EqualFold(strings.TrimSpace(r.IP), canonicalIP) {
-				rec = &r
-				found = true
-			}
-			return nil
-		})
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Sprintf("Ошибка чтения БД: %v", err)
 	}
-	if rec == nil || (rec.Current.SwitchID == "" && len(rec.History) == 0) {
+	if !found {
 		return fmt.Sprintf("IP %s не найден в базе", canonicalIP)
 	}
-	return formatMacResult(rec.MacAddress, rec)
+	if macRec != nil && (macRec.Current.SwitchID != "" || len(macRec.History) > 0) {
+		return formatMacResult(macRec.MacAddress, macRec)
+	}
+	// IP найден у «не найденного» MAC — выводим его статус, как в searchByMAC.
+	var b strings.Builder
+	fmt.Fprintf(&b, "MAC %s\n", formatMAC(unfRec.MacAddress))
+	fmt.Fprintf(&b, "  Статус:     не резолвится в конечную точку (reason=%s)\n", unfRec.Reason)
+	if unfRec.IP != "" {
+		fmt.Fprintf(&b, "  IP:         %s\n", unfRec.IP)
+	}
+	if unfRec.LastSwitch != "" {
+		fmt.Fprintf(&b, "  Последний раз: %s / %s (%s)\n", unfRec.LastSwitch, unfRec.LastPort, ts(unfRec.LastSeen))
+	}
+	return b.String()
 }
 
 // formatMacResult формирует челочитаемый отчёт по записи MacRecord: MAC,
