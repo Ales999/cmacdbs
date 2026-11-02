@@ -1,6 +1,32 @@
 package nxthst
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
+
+// TestParseprtchLargeBundle проверяет, что Port-Channel с числом членов больше
+// старой границы среза (14) парсится целиком, без потери портов — см. REVIEW.md п.8.
+func TestParseprtchLargeBundle(t *testing.T) {
+	const n = 20
+	lines := []string{"Group: 99"}
+	for i := 1; i <= n; i++ {
+		lines = append(lines, fmt.Sprintf("Port: TenGigabitEthernet1/0/%d", i))
+	}
+	// Следующая группа — опора, на которой парсер должен остановиться.
+	lines = append(lines, "Group: 100", "Port: TenGigabitEthernet1/0/99")
+
+	got := parseprtch(lines)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 groups, got %d: %v", len(got), got)
+	}
+	if got[0].GroupID != "Po99" {
+		t.Errorf("group id = %q, want Po99", got[0].GroupID)
+	}
+	if len(got[0].GroupPorts) != n {
+		t.Errorf("expected %d ports in Po99, got %d: %v", n, len(got[0].GroupPorts), got[0].GroupPorts)
+	}
+}
 
 // TestParseRobustNoPanic проверяет, что «битые» строки вывода коммутатора не
 // роняют парсер паникой (index out of range) — см. REVIEW.md п.2.

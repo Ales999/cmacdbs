@@ -61,13 +61,12 @@ func parseprtch(txtlines []string) []PrtChlInfo {
 
 			var tmpgrprts []string // группа портов в данном ether-channel
 
-			// Выбираем остатки что еще не сканировали в отдельный слайс (только следующие 20 строк)
-			var tlsts []string
-			if len(txtlines[n+1:]) > 16 { // Если осталось в файле больше 16 строк то берем только 15 строк
-				tlsts = txtlines[n+1 : n+15]
-			} else {
-				tlsts = txtlines[n+1:]
-			}
+			// Собираем все строки после текущей Group:. Парсер ниже сам
+			// останавливается на первой строке, не начинающейся с "Port:"
+			// (следующая Group: или пустая строка), поэтому верхняя граница
+			// здесь не нужна: раньше срез txtlines[n+1:n+15] (14 элементов при
+			// комментарии «15») отбрасывал порты больших Port-Channel
+			tlsts := txtlines[n+1:]
 			// Ищем порты
 			for _, plst := range tlsts {
 				if !strings.HasPrefix(plst, "Port:") {
