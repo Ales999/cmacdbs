@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -138,6 +139,43 @@ func TestBuildTopology(t *testing.T) {
 	}
 	if n := byHost["server1"]; n.RemoteInterface != "Ethernet1/33" || n.Managed {
 		t.Errorf("server1 edge wrong (should be unmanaged): %+v", n)
+	}
+}
+
+// TestBuildTopologyDeterministic проверяет, что рёбра топологии отсортированы по
+// локальному порту, несмотря на недетерминированный range по map (п.6 REVIEW).
+func TestBuildTopologyDeterministic(t *testing.T) {
+	managed := map[string]bool{}
+	sw := SwitchMACData{
+		SwitchName: "swA",
+		CDPNeighbors: map[string]CDPNeighbor{
+			"TenGigabitEthernet1/1/9":  {NeighborHostname: "h9", LocalInterface: "TenGigabitEthernet1/1/9"},
+			"TenGigabitEthernet1/1/1":  {NeighborHostname: "h1", LocalInterface: "TenGigabitEthernet1/1/1"},
+			"TenGigabitEthernet1/1/5":  {NeighborHostname: "h5", LocalInterface: "TenGigabitEthernet1/1/5"},
+			"TenGigabitEthernet1/1/23": {NeighborHostname: "h23", LocalInterface: "TenGigabitEthernet1/1/23"},
+		},
+	}
+	// Собираем все ключи и перемешиваем порядок вставки в новую карту несколько
+	// раз — если сортировка на месте, результат всё равно стабилен.
+	for iter := 0; iter < 5; iter++ {
+		keys := []string{"TenGigabitEthernet1/1/9", "TenGigabitEthernet1/1/1", "TenGigabitEthernet1/1/5", "TenGigabitEthernet1/1/23"}
+		// простой reverse для разнообразия порядка итерации
+		for i, j := 0, len(keys)-1; i < j; i, j = i+1, j-1 {
+			keys[i], keys[j] = keys[j], keys[i]
+		}
+		shuffled := make(map[string]CDPNeighbor, len(keys))
+		for _, k := range keys {
+			shuffled[k] = sw.CDPNeighbors[k]
+		}
+		tw := buildTopology(SwitchMACData{SwitchName: "swA", CDPNeighbors: shuffled}, managed)
+		var gotIfaces []string
+		for _, n := range tw.Neighbors {
+			gotIfaces = append(gotIfaces, n.LocalInterface)
+		}
+		want := []string{"TenGigabitEthernet1/1/1", "TenGigabitEthernet1/1/23", "TenGigabitEthernet1/1/5", "TenGigabitEthernet1/1/9"}
+		if !reflect.DeepEqual(gotIfaces, want) {
+			t.Errorf("iter %d: neighbors not sorted by LocalInterface;\ngot:  %v\nwant: %v", iter, gotIfaces, want)
+		}
 	}
 }
 

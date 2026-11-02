@@ -102,6 +102,14 @@ func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 // (internal — маршрутизатор, где sh mac пуст, или устройство, от которого не
 // смогли получить данные). Для каждого случая возвращается первый подходящий
 // порт. Если портов нет — оба флага остаются false.
+//
+// Ограничение: линк без записи CDP классифицируется как external. Это сознатель-
+// ный консервативный выбор — «no CDP» охватывает два разных случая: управляемый
+// сосед с выключенным CDP и неуправляемое устройство/сервер за линком, куда CDP
+// не достаёт. Перевод всех «no CDP» в internal wrongly отнёс бы к управляемой
+// области и неуправляемые устройства, поэтому по умолчанию выбран external.
+// Рост внешних MAC в отчёте может быть артефактом выключенного CDP на соседях —
+// это следует иметь в виду при интерпретации метрики (см. REVIEW.md п.7).
 func linkMACReason(linkLocs []macLocation, cdpLinesBySwitch map[string][]string, hostNamesSet map[string]bool) linkReasonResult {
 	var res linkReasonResult
 	var debugCount int

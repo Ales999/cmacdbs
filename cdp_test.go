@@ -9,9 +9,9 @@ import (
 func splitLines(s string) []string { return strings.Split(s, "\n") }
 
 const swTmsCore01CDP = `Device ID: Tmscore01.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 172.22.59.38
-Platform: cisco WS-C2960X-48FPD-L,  Capabilities: Switch IGMP 
+Platform: cisco WS-C2960X-48FPD-L,  Capabilities: Switch IGMP
 Interface: FiftyGigE2/0/39,  Port ID (outgoing port): TenGigabitEthernet1/0/2
 Holdtime : 175 sec
 
@@ -23,14 +23,14 @@ Peer Source MAC: a4b2.39a5.1334
 VTP Management Domain: 'SWT'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 172.22.59.38
 
 -------------------------
 Device ID: Tmscore01.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 172.22.59.38
-Platform: cisco WS-C2960X-48FPD-L,  Capabilities: Switch IGMP 
+Platform: cisco WS-C2960X-48FPD-L,  Capabilities: Switch IGMP
 Interface: FiftyGigE1/0/39,  Port ID (outgoing port): TenGigabitEthernet1/0/1
 Holdtime : 159 sec
 
@@ -38,14 +38,14 @@ advertisement version: 2
 Peer Source MAC: a4b2.39a5.1333
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 172.22.59.38
 
 -------------------------
 Device ID: Tmscore02.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 172.22.59.9
-Platform: cisco C9200L-48PL-4X,  Capabilities: Switch IGMP 
+Platform: cisco C9200L-48PL-4X,  Capabilities: Switch IGMP
 Interface: FiftyGigE1/0/8,  Port ID (outgoing port): TenGigabitEthernet1/1/4
 Holdtime : 129 sec
 
@@ -53,14 +53,14 @@ advertisement version: 2
 Peer Source MAC: d085.43f4.5ab4
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 172.22.59.9
 `
 
 const swDcm4500CDP = `Device ID: 0050568d209a
-Entry address(es): 
+Entry address(es):
   IP address: 172.24.25.150
-Platform: Cisco-VM-SPID,  Capabilities: Host 
+Platform: Cisco-VM-SPID,  Capabilities: Host
 Interface: TenGigabitEthernet1/1/13,  Port ID (outgoing port): eth0
 Holdtime : 179 sec
 
@@ -69,9 +69,9 @@ Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm36.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 172.24.32.17
-Platform: cisco WS-C3650-8X24UQ,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C3650-8X24UQ,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet2/1/25,  Port ID (outgoing port): TenGigabitEthernet1/1/4
 Holdtime : 160 sec
 
@@ -79,15 +79,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 172.24.32.17
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm36.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 172.24.32.17
-Platform: cisco WS-C3650-8X24UQ,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C3650-8X24UQ,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet1/1/25,  Port ID (outgoing port): TenGigabitEthernet2/1/4
 Holdtime : 155 sec
 
@@ -95,15 +95,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 172.24.32.17
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm37
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.9.150
-Platform: cisco WS-C3750X-48,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C3750X-48,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet1/1/24,  Port ID (outgoing port): TenGigabitEthernet1/1/2
 Holdtime : 169 sec
 
@@ -111,15 +111,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.9.150
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm37
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.9.150
-Platform: cisco WS-C3750X-48,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C3750X-48,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet2/1/24,  Port ID (outgoing port): TenGigabitEthernet2/1/2
 Holdtime : 166 sec
 
@@ -127,15 +127,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.9.150
 Unidirectional Mode: off
 `
 
 const swDcm4500ExtCDP = `Device ID: myswcm45.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.3.253
-Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet1/1/27,  Port ID (outgoing port): TenGigabitEthernet1/1/15
 Holdtime : 129 sec
 
@@ -143,15 +143,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.3.253
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm45.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.3.253
-Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet2/1/28,  Port ID (outgoing port): TenGigabitEthernet2/1/4
 Holdtime : 145 sec
 
@@ -159,15 +159,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.3.253
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm45.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.3.253
-Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet2/1/27,  Port ID (outgoing port): TenGigabitEthernet1/2/8
 Holdtime : 170 sec
 
@@ -175,15 +175,15 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.3.253
 Unidirectional Mode: off
 
 -------------------------
 Device ID: myswcm45.domain.test
-Entry address(es): 
+Entry address(es):
   IP address: 192.168.3.253
-Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP 
+Platform: cisco WS-C4500X-32,  Capabilities: Router Switch IGMP
 Interface: TenGigabitEthernet1/1/28,  Port ID (outgoing port): TenGigabitEthernet2/2/8
 Holdtime : 171 sec
 
@@ -191,7 +191,7 @@ advertisement version: 2
 VTP Management Domain: 'DCM-Core'
 Native VLAN: 1
 Duplex: full
-Management address(es): 
+Management address(es):
   IP address: 192.168.3.253
 Unidirectional Mode: off
 `

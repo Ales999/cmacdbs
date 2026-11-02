@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -52,6 +53,15 @@ func buildTopology(sw SwitchMACData, managed map[string]bool) TopologySwitch {
 			Managed:         managed[strings.ToLower(nb.NeighborHostname)],
 		})
 	}
+	// Сортировка по локальному порту (а затем по хосту соседа) делает порядок
+	// рёбер детерминированным: снимок топологии одинаковый из запуска в запуск,
+	// что важно для диффа и веб-карти (range по map даёт разный порядок).
+	sort.Slice(t.Neighbors, func(i, j int) bool {
+		if t.Neighbors[i].LocalInterface == t.Neighbors[j].LocalInterface {
+			return t.Neighbors[i].RemoteHostname < t.Neighbors[j].RemoteHostname
+		}
+		return t.Neighbors[i].LocalInterface < t.Neighbors[j].LocalInterface
+	})
 	return t
 }
 
