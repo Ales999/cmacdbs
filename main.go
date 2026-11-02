@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -301,18 +302,40 @@ func macToCisco(key string) string {
 	return b.String()
 }
 
-// resolveArpIP ищет IP-адрес для MAC-адреса (канонический ключ) в ARP-линиях
-// через cisaccs.CisFindArp и возвращает канонический IPv4-адрес (или пустую
-// строку, если привязки нет). MAC ищется в cisco-виде, как он выводится в
-// `sh arp`.
-func resolveArpIP(arpLines []string, macKey string) string {
-	if len(arpLines) == 0 {
-		return ""
-	}
-	if ok, arpl := cisaccs.CisFindArp(arpLines, macToCisco(macKey)); ok {
-		if resolved, ok := normalizeIP(arpl.GetIp()); ok {
-			return resolved
+// arpLineRe парсит строку `sh arp`, повторяя логику cisaccs.ParseArpLine (её
+// парсер находится в internal-пакете cisaccs и недоступен из cmacdbs).
+var arpLineRe = regexp.MustCompile(`^Internet\s+(\S+)\s+[0-9|-]+\s+(\S+)\s+ARPA\s+(\S+)$`)
+
+// buildArpIpIndex строит индекс «MAC (cisco-вид) → канонический IP» из вывода
+// `sh arp` один раз на весь запуск. MAC нормализуется через macToKey/macToCisco,
+// чтобы ключ индек совпал с тем, который используется при запросе
+// (macToCisco(macKey)). Регулярка компилируется один раз, весь проход — O(N).
+func buildArpIpIndex(arpLines []string) map[string]string {
+	idx := make(map[string]string, len(arpLines))
+	for _, line := range arpLines {
+		res := arpLineRe.FindStringSubmatch(strings.TrimSpace(line))
+		if len(res) < 3 || res[2] == "Incomplete" {
+			continue
 		}
+		// MAC-ключ должен быть каноническим (12 hex), иначе macToCisco уйдёт за
+		// пределы строки. Неканонические/битые MAC в ARP-таблице привязке не
+		// подлежат — запрос всегда приходит в 12-символьном виде.
+		key := macToKey(res[2])
+		if len(key) != 12 {
+			continue
+		}
+		if ip, ok := normalizeIP(res[1]); ok {
+			idx[macToCisco(key)] = ip
+		}
+	}
+	return idx
+}
+
+// resolveArpIP возвращает канонический IPv4-адрес для MAC-ключа из заранее
+// построенного ARP-индекса (O(1)). Пустая строка, если привязки нет.
+func resolveArpIP(arpIpByMac map[string]string, macKey string) string {
+	if ip, ok := arpIpByMac[macToCisco(macKey)]; ok {
+		return ip
 	}
 	return ""
 }

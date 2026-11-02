@@ -304,6 +304,10 @@ func collectDataAndSave() {
 	for _, data := range allCollected {
 		allArpLines = append(allArpLines, data.ARP...)
 	}
+	// Индекс MAC→IP строится один раз (O(N)), чтобы резолвинг IP для каждого из
+	// тысяч уникальных MAC был O(1), а не сканированием всех ARP-линий каждый
+	// раз — иначе это O(N*M) и основная причина замедления после добавления ARP.
+	arpIpByMac := buildArpIpIndex(allArpLines)
 
 	// First pass: собрать все локации (switch, порт) для каждого MAC.
 	type macInfo struct {
@@ -373,7 +377,7 @@ func collectDataAndSave() {
 
 			// Привязываем IP-адрес из ARP-таблицы. Таблица MAC-адресов IP не
 			// содержит, поэтому ищем MAC в суммарных ARP-линиях.
-			ip := resolveArpIP(allArpLines, macAddr)
+			ip := resolveArpIP(arpIpByMac, macAddr)
 			if ip != "" {
 				ipCount++
 			}
@@ -406,7 +410,7 @@ func collectDataAndSave() {
 			reason := linkMACReason(linkLocs, cdpLinesBySwitch, hostNamesSet)
 			// Даже без конечной точки MAC часто резолвится в IP через ARP (напр.
 			// сервер за линком). Сохраняем IP, чтобы он отображался в поиске.
-			ip := resolveArpIP(allArpLines, macAddr)
+			ip := resolveArpIP(arpIpByMac, macAddr)
 			if ip != "" {
 				unfoundIpCount++
 			}

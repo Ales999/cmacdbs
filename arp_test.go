@@ -60,17 +60,19 @@ func TestResolveArpIP(t *testing.T) {
 		"Internet  10.99.99.99             5   Incomplete  ARPA   Ethernet0/9",
 	}
 
+	arpIdx := buildArpIpIndex(arp)
+
 	t.Run("found", func(t *testing.T) {
-		if got := resolveArpIP(arp, "aabbcc001030"); got != "10.23.1.1" {
+		if got := resolveArpIP(arpIdx, "aabbcc001030"); got != "10.23.1.1" {
 			t.Errorf("resolveArpIP = %q, want 10.23.1.1", got)
 		}
-		if got := resolveArpIP(arp, "aabbcc002030"); got != "10.23.1.2" {
+		if got := resolveArpIP(arpIdx, "aabbcc002030"); got != "10.23.1.2" {
 			t.Errorf("resolveArpIP = %q, want 10.23.1.2", got)
 		}
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		if got := resolveArpIP(arp, "001122334455"); got != "" {
+		if got := resolveArpIP(arpIdx, "001122334455"); got != "" {
 			t.Errorf("resolveArpIP = %q, want empty", got)
 		}
 	})
