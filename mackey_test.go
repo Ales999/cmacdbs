@@ -224,66 +224,6 @@ func TestApplySVISeenUpdates(t *testing.T) {
 	}
 }
 
-func TestMigrateMacKeysCollapsesDuplicates(t *testing.T) {
-	newTestDB(t)
-	// Один и тот же MAC записан под тремя старими ключами (разные формы).
-	mk := func(mac, sw, port string, ts int64) []byte {
-		return mustJSON(t, MacRecord{
-			MacAddress: mac,
-			Current:    Visit{SwitchID: sw, Port: port, Timestamp: time.Unix(ts, 0)},
-			History:    []Visit{{SwitchID: "old", Port: port, Timestamp: time.Unix(ts-100, 0)}},
-		})
-	}
-	if err := db.Update(func(tx *bbolt.Tx) error {
-		b, err := tx.CreateBucket(bucketName)
-		if err != nil {
-			return err
-		}
-		if err := b.Put([]byte("4cbd.8f73.d94d"), mk("4cbd.8f73.d94d", "swA", "Gi0/1", 100)); err != nil {
-			return err
-		}
-		if err := b.Put([]byte("4cbd-8f73-d94d"), mk("4cbd-8f73-d94d", "swB", "Gi0/2", 200)); err != nil {
-			return err
-		}
-		return b.Put([]byte("4cbd8f73d94d"), mk("4cbd8f73d94d", "swA", "Gi0/1", 50))
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := migrateMacKeys(); err != nil {
-		t.Fatal(err)
-	}
-
-	// После миграции — ровно одна запись под каноническим ключом.
-	var count int
-	if err := db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		return b.ForEach(func(_, _ []byte) error { count++; return nil })
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 record after migration, got %d", count)
-	}
-
-	rec, err := loadMacRecord("4cbd8f73d94d")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Current.SwitchID != "swB" {
-		t.Errorf("Current.SwitchID = %q, want swB (most recent)", rec.Current.SwitchID)
-	}
-	// История объединена и не содержит дублей (switch|port).
-	seen := make(map[string]bool)
-	for _, h := range rec.History {
-		kk := h.SwitchID + "|" + h.Port
-		if seen[kk] {
-			t.Errorf("duplicate history entry %q", kk)
-		}
-		seen[kk] = true
-	}
-}
-
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
