@@ -53,8 +53,8 @@ type sviEmptyDelete struct {
 func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 	debugf("Connecting to switch %s", swName)
 
-	var output1, output2, cdpOut []string
-	var err1, err2, err3 error
+	var output1, output2, cdpOut, arpOut []string
+	var err1, err2, err3, err4 error
 
 	output1, err1 = acc.OneCisExecuteSsh(swName, 22, []string{"sh mac address-table"})
 	if err1 != nil {
@@ -73,6 +73,13 @@ func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 		return switchResult{err: fmt.Errorf("switch %s sh cdp/etherchannel: %w", swName, err3)}
 	}
 
+	// ARP-таблица: содержит привязку IP -> MAC, которую нельзя получить из
+	// таблицы MAC-адресов. Нужна, чтобы сохранить IP для конечных точек.
+	arpOut, err4 = acc.OneCisExecuteSsh(swName, 22, []string{"sh arp"})
+	if err4 != nil {
+		return switchResult{err: fmt.Errorf("switch %s sh arp: %w", swName, err4)}
+	}
+
 	parsedMacs := cisaccs.CisGetAllMacEntries(output1)
 	sviList := cisaccs.ParseIntDescSVI(output2)
 	cdpMap := parseCDPNeighbors(cdpOut)
@@ -84,6 +91,7 @@ func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 			SVIs:         sviList,
 			CDPNeighbors: cdpMap,
 			CDPLines:     cdpOut,
+			ARP:          arpOut,
 		},
 	}
 }
@@ -270,6 +278,7 @@ func collectDataAndSave() {
 
 	var totalMacs int
 	var newCount, changeCount, unchangedCount int
+	var ipCount int
 
 	// Deterministic order: sort collected data by switch name so that the "first"
 	// switch seen for a given MAC is stable across runs (avoids nondeterministic
@@ -286,6 +295,14 @@ func collectDataAndSave() {
 	cdpLinesBySwitch := make(map[string][]string)
 	for _, data := range allCollected {
 		cdpLinesBySwitch[data.SwitchName] = data.CDPLines
+	}
+
+	// Суммарные линии `sh arp` всех коммутаторов. Нужны, чтобы привязать IP к
+	// MAC конечной точки: таблица MAC-адресов IP не содержит, привязка — в
+	// ARP-таблице того устройства, которое является шлюзом для VLAN хоста.
+	var allArpLines []string
+	for _, data := range allCollected {
+		allArpLines = append(allArpLines, data.ARP...)
 	}
 
 	// First pass: собрать все локации (switch, порт) для каждого MAC.
@@ -352,6 +369,14 @@ func collectDataAndSave() {
 		if endpoint != nil {
 			// MAC найден: конечная точка на access-порту. Записываем в MacHistory.
 			existing, _ := loadMacRecord(macAddr)
+
+			// Привязываем IP-адрес из ARP-таблицы. Таблица MAC-адресов IP не
+			// содержит, поэтому ищем MAC в суммарных ARP-линиях.
+			ip := resolveArpIP(allArpLines, macAddr)
+			if ip != "" {
+				ipCount++
+			}
+
 			newVisit := Visit{
 				SwitchID:  endpoint.switchName,
 				Port:      endpoint.iface,
@@ -369,6 +394,7 @@ func collectDataAndSave() {
 				newCount++
 			}
 			existing.MacAddress = macAddr
+			existing.IP = ip
 			existing.Current = newVisit
 			updates = append(updates, updateEntry{macAddr: macAddr, record: *existing})
 		} else {
@@ -457,6 +483,7 @@ func collectDataAndSave() {
 	fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
 	fmt.Printf("Unfound MACs (link leads outside): %d\n", unfoundCount)
 	fmt.Printf("Internal/interface MACs (port not found): %d\n", internalCount)
+	fmt.Printf("Endpoint MACs with IP resolved: %d\n", ipCount)
 	if len(emptySVIs) > 0 {
 		fmt.Printf("---\nEmpty SVIs (no MACs):\n")
 		for _, s := range emptySVIs {

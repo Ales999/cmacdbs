@@ -102,14 +102,14 @@ func TestSearchMacHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := captureStdout(t, func() { searchMac("4CBD.8F73.D94D") })
+	out := searchByMAC("4CBD.8F73.D94D")
 	for _, want := range []string{
 		"MAC 4C:BD:8F:73:D9:4D",
 		"Сейчас:     swA / Gi0/1",
 		"История 1:  swB / Gi0/2",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("searchMac output missing %q;\ngot:\n%s", want, out)
+			t.Errorf("searchByMAC output missing %q;\ngot:\n%s", want, out)
 		}
 	}
 }
@@ -134,14 +134,14 @@ func TestSearchMacUnfound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := captureStdout(t, func() { searchMac("f433-9234-d502") })
+	out := searchByMAC("f433-9234-d502")
 	for _, want := range []string{
 		"MAC F4:33:92:34:D5:02",
 		"не резолвится в конечную точку (reason=external)",
 		"Последний раз: swA / Po14",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("searchMac output missing %q;\ngot:\n%s", want, out)
+			t.Errorf("searchByMAC output missing %q;\ngot:\n%s", want, out)
 		}
 	}
 }
@@ -149,12 +149,12 @@ func TestSearchMacUnfound(t *testing.T) {
 func TestSearchMacNotFoundAndInvalid(t *testing.T) {
 	newTestDB(t)
 
-	out := captureStdout(t, func() { searchMac("001122334455") })
+	out := searchByMAC("001122334455")
 	if !strings.Contains(out, "не найден в базе") {
 		t.Errorf("expected not-found message, got:\n%s", out)
 	}
 
-	out = captureStdout(t, func() { searchMac("nope") })
+	out = searchByMAC("nope")
 	if !strings.Contains(out, "не похоже на MAC") {
 		t.Errorf("expected invalid-MAC message, got:\n%s", out)
 	}

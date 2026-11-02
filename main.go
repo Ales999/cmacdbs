@@ -36,6 +36,7 @@ type Visit struct {
 
 type MacRecord struct {
 	MacAddress string  `json:"mac_address"`
+	IP         string  `json:"ip,omitempty"`
 	Current    Visit   `json:"current"`
 	History    []Visit `json:"history"`
 }
@@ -78,6 +79,10 @@ type SwitchMACData struct {
 	// `sh cdp entry * | i Device|Interface`. Нужен для резолвинга линк-портов
 	// (в т.ч. Port-Channel) до соседнего хоста через nxthst.FindNextPortbyMac.
 	CDPLines []string
+	// ARP — вывод `sh arp` на коммутаторе. Нужен, чтобы привязать IP-адрес к
+	// MAC-адресу конечной точки через cisaccs.CisFindArp (MAC из таблицы MAC
+	// напрямую IP не содержит, привязка хранится в ARP-таблице).
+	ARP []string
 }
 
 type CDPNeighbor struct {
@@ -125,9 +130,9 @@ func main() {
 	}
 	defer db.Close()
 
-	// Если указан -s, ищем переданный MAC вместо заполнения базы.
+	// Если указан -s, ищем переданный MAC (или IP) вместо заполнения базы.
 	if strings.TrimSpace(cli.SearchMAC) != "" {
-		searchMac(cli.SearchMAC)
+		fmt.Println(search(strings.TrimSpace(cli.SearchMAC)))
 		return
 	}
 
@@ -141,15 +146,27 @@ func debugf(format string, args ...any) {
 	}
 }
 
-// searchMac ищет переданный MAC в базе данных и выводит найденные данные:
+// search определяет тип переданного адраса (IPv4 или MAC) и вызывает
+// соответствующий режим поиска. Строки взаимно исключающие: IPv4 содержит
+// точки и десятичные октеты, MAC — 12 hex-символов, поэтому путаницы нет.
+func search(raw string) string {
+	if ip, ok := normalizeIP(raw); ok {
+		return searchByIP(ip)
+	}
+	if _, ok := normalizeMAC(raw); ok {
+		return searchByMAC(raw)
+	}
+	return fmt.Sprintf("Ошибка: %q не похоже ни на MAC-адрес, ни на IP-адрес", raw)
+}
+
+// searchByMAC ищет переданный MAC в базе данных и формирует текст отчёта:
 // текущее место нахождения из MacHistory (или запись из UnfoundMAC, если MAC
-// не резолдится в конечную точку). Формат ввода гибкий: принимает разделители
+// не резолвится в конечную точку). Формат ввода гибкий: принимает разделители
 // «:», «-» и «.» (в т.ч. cisco-вид 0011.2233.4455).
-func searchMac(raw string) {
+func searchByMAC(raw string) string {
 	key, ok := normalizeMAC(raw)
 	if !ok {
-		fmt.Printf("Ошибка: %q не похоже на MAC-адрес\n", raw)
-		return
+		return fmt.Sprintf("Ошибка: %q не похоже на MAC-адрес", raw)
 	}
 
 	// После миграции все ключи в БД канонические (macToKey убирает «:», «-», «»
@@ -165,14 +182,7 @@ func searchMac(raw string) {
 			continue
 		} else if rec.Current.SwitchID != "" || len(rec.History) > 0 {
 			debugf("matched MacHistory via key %q", k)
-			fmt.Printf("MAC %s\n", formatMAC(key))
-			if rec.Current.SwitchID != "" {
-				fmt.Printf("  Сейчас:     %s / %s (%s)\n", rec.Current.SwitchID, rec.Current.Port, ts(rec.Current.Timestamp))
-			}
-			for i, h := range rec.History {
-				fmt.Printf("  История %d:  %s / %s (%s)\n", i+1, h.SwitchID, h.Port, ts(h.Timestamp))
-			}
-			return
+			return formatMacResult(key, rec)
 		}
 	}
 
@@ -183,16 +193,124 @@ func searchMac(raw string) {
 			continue
 		} else if unf != nil && (unf.LastSwitch != "" || unf.Reason != "") {
 			debugf("matched UnfoundMAC via key %q", k)
-			fmt.Printf("MAC %s\n", formatMAC(key))
-			fmt.Printf("  Статус:     не резолвится в конечную точку (reason=%s)\n", unf.Reason)
+			var b strings.Builder
+			fmt.Fprintf(&b, "MAC %s\n", formatMAC(key))
+			fmt.Fprintf(&b, "  Статус:     не резолвится в конечную точку (reason=%s)\n", unf.Reason)
 			if unf.LastSwitch != "" {
-				fmt.Printf("  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
+				fmt.Fprintf(&b, "  Последний раз: %s / %s (%s)\n", unf.LastSwitch, unf.LastPort, ts(unf.LastSeen))
 			}
-			return
+			return b.String()
 		}
 	}
 
-	fmt.Printf("MAC %s не найден в базе\n", formatMAC(key))
+	return fmt.Sprintf("MAC %s не найден в базе", formatMAC(key))
+}
+
+// searchByIP ищет MAC по привязанному IP-адресу в MacHistory и формирует
+// текст отчёта. Вторичного индекса по IP нет, поэтому бакет MacHistory
+// перебирается полностью (размер порядка тысяч записей — для одиночного
+// поиска в CLI приемлемо).
+func searchByIP(canonicalIP string) string {
+	var rec *MacRecord
+	found := false
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(_k, v []byte) error {
+			if found {
+				return nil
+			}
+			var r MacRecord
+			if err := json.Unmarshal(v, &r); err != nil {
+				return nil
+			}
+			if strings.EqualFold(strings.TrimSpace(r.IP), canonicalIP) {
+				rec = &r
+				found = true
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return fmt.Sprintf("Ошибка чтения БД: %v", err)
+	}
+	if rec == nil || (rec.Current.SwitchID == "" && len(rec.History) == 0) {
+		return fmt.Sprintf("IP %s не найден в базе", canonicalIP)
+	}
+	return formatMacResult(rec.MacAddress, rec)
+}
+
+// formatMacResult формирует челочитаемый отчёт по записи MacRecord: MAC,
+// привязанный IP, текущее место нахождения и история перемещений.
+func formatMacResult(macKey string, rec *MacRecord) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "MAC %s\n", formatMAC(macKey))
+	if rec.IP != "" {
+		fmt.Fprintf(&b, "  IP:         %s\n", rec.IP)
+	}
+	if rec.Current.SwitchID != "" {
+		fmt.Fprintf(&b, "  Сейчас:     %s / %s (%s)\n", rec.Current.SwitchID, rec.Current.Port, ts(rec.Current.Timestamp))
+	}
+	for i, h := range rec.History {
+		fmt.Fprintf(&b, "  История %d:  %s / %s (%s)\n", i+1, h.SwitchID, h.Port, ts(h.Timestamp))
+	}
+	return b.String()
+}
+
+// normalizeIP приводит строку к каноническому IPv4-виду (четыре октета через
+// «.» без ведущих нулей) и возвращает false, если входная строка не валидный
+// IPv4-адрес. Нужен, чтобы ввод пользователя и IP из ARP-таблицы сравнивались
+// в одинаковом виде.
+func normalizeIP(ip string) (string, bool) {
+	parts := strings.Split(strings.TrimSpace(ip), ".")
+	if len(parts) != 4 {
+		return "", false
+	}
+	var canonical strings.Builder
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return "", false
+		}
+		if i > 0 {
+			canonical.WriteByte('.')
+		}
+		canonical.WriteString(strconv.Itoa(n))
+	}
+	return canonical.String(), true
+}
+
+// macToCisco приводит канонический MAC-ключ (12 hex нижнего регистра) к
+// cisco-виду «aabb.cc00.1030», как он выводится в `sh arp`/`sh mac
+// address-table`. Нужен, чтобы искать MAC в ARP-таблице через
+// cisaccs.CisFindArp (он сравнивает без нормализации разделителей).
+func macToCisco(key string) string {
+	var b strings.Builder
+	for i := 0; i < len(key); i += 4 {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(key[i : i+4])
+	}
+	return b.String()
+}
+
+// resolveArpIP ищет IP-адрес для MAC-адреса (канонический ключ) в ARP-линиях
+// через cisaccs.CisFindArp и возвращает канонический IPv4-адрес (или пустую
+// строку, если привязки нет). MAC ищется в cisco-виде, как он выводится в
+// `sh arp`.
+func resolveArpIP(arpLines []string, macKey string) string {
+	if len(arpLines) == 0 {
+		return ""
+	}
+	if ok, arpl := cisaccs.CisFindArp(arpLines, macToCisco(macKey)); ok {
+		if resolved, ok := normalizeIP(arpl.GetIp()); ok {
+			return resolved
+		}
+	}
+	return ""
 }
 
 // macCandidateKeys возвращает формы ключа, в которых один и тот же MAC (в
