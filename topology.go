@@ -70,6 +70,31 @@ func saveTopologySwitch(t TopologySwitch) error {
 	})
 }
 
+// saveTopologySwitches пачкой перезаписывает снимки топологии коммутаторов
+// (один write-транзакт вместо одного на коммутатор). Используется в
+// collectDataAndSave для снижения числа транзактов и конкуренции за write-lock.
+func saveTopologySwitches(snapshots []TopologySwitch) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	return db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(topologyBucket)
+		if err != nil {
+			return err
+		}
+		for _, t := range snapshots {
+			data, err := json.Marshal(t)
+			if err != nil {
+				return err
+			}
+			if err := b.Put([]byte(strings.ToLower(t.Hostname)), data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // reconcileTopology обновляет MissRuns у коммутаторов в топологии:
 //   - доступные в текущем запуске — MissRuns=0;
 //   - отсутствующие увеличивают MissRuns и удаляются после topologyStaleRuns.

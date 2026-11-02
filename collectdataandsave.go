@@ -152,6 +152,10 @@ func collectDataAndSave() {
 		scanMu.Unlock()
 	}()
 
+	// Единая временная метка на весь запуск: не вызываем time.Now() на каждый MAC
+	// и держим все временные метки записей согласованными.
+	now := time.Now()
+
 	cisFile := getHostsFile()
 	pwdFile := getPasswdFile()
 
@@ -220,7 +224,6 @@ func collectDataAndSave() {
 				if sv.Status != "up" || sv.Protocol != "up" {
 					continue
 				}
-				now := time.Now()
 				if vlansWithMacs[sv.VlanID] {
 					// VLAN занят динамическим MAC — обновляем метку видимости и
 					// убираем SVI из пустых, если был помечен.
@@ -260,7 +263,7 @@ func collectDataAndSave() {
 	// Помечаем пустыми только те SVI, что без MAC уже больше месяца.
 	var confirmedEmpty int
 	for _, e := range emptySVIs {
-		if !sviIsEmptyConfirmed(e.switchID, e.vlanID, time.Now()) {
+		if !sviIsEmptyConfirmed(e.switchID, e.vlanID, now) {
 			continue
 		}
 		if err := saveEmptySVI(e.switchID, e.vlanID, e.svi); err != nil {
@@ -352,6 +355,9 @@ func collectDataAndSave() {
 	var unfoundCount int
 	var internalCount int
 	var unfoundIpCount int
+	// Накапливаем «не найденные» MAC, чтобы выписать их одним транзактом (см.
+	// batch write ниже), а не по одному db.Update на MAC.
+	var unfoundRecords []UnfoundRecord
 
 	for _, macAddr := range macAddrs {
 		info := macInfos[macAddr]
@@ -391,7 +397,7 @@ func collectDataAndSave() {
 			newVisit := Visit{
 				SwitchID:  endpoint.switchName,
 				Port:      endpoint.iface,
-				Timestamp: time.Now(),
+				Timestamp: now,
 			}
 			if existing.MacAddress != "" && strings.EqualFold(existing.Current.SwitchID, endpoint.switchName) && strings.EqualFold(existing.Current.Port, endpoint.iface) {
 				unchangedCount++
@@ -422,30 +428,26 @@ func collectDataAndSave() {
 			}
 			if reason.isExternal {
 				unfoundCount++
-				if err := saveUnfoundMAC(macAddr, UnfoundRecord{
+				unfoundRecords = append(unfoundRecords, UnfoundRecord{
 					MacAddress: macAddr,
 					LastSwitch: reason.extLoc.switchName,
 					LastPort:   reason.extLoc.iface,
 					Neighbor:   reason.extHost,
 					Reason:     "external",
 					IP:         ip,
-					LastSeen:   time.Now(),
-				}); err != nil {
-					log.Printf("Error saving unfound MAC %s: %v", macAddr, err)
-				}
+					LastSeen:   now,
+				})
 			} else if reason.isInternal {
 				internalCount++
-				if err := saveUnfoundMAC(macAddr, UnfoundRecord{
+				unfoundRecords = append(unfoundRecords, UnfoundRecord{
 					MacAddress: macAddr,
 					LastSwitch: reason.intLoc.switchName,
 					LastPort:   reason.intLoc.iface,
 					Neighbor:   reason.intHost,
 					Reason:     "internal",
 					IP:         ip,
-					LastSeen:   time.Now(),
-				}); err != nil {
-					log.Printf("Error saving internal MAC %s: %v", macAddr, err)
-				}
+					LastSeen:   now,
+				})
 			}
 		}
 	}
@@ -467,13 +469,72 @@ func collectDataAndSave() {
 		log.Printf("Error batch writing MAC records: %v", err)
 	}
 
+	// Batch write all unfound records in one transaction. Логика insert-once
+	// повторяет saveUnfoundMAC: новый MAC добавляется, существующий —
+	// обновляется (LastSeen/LastSwitch/LastPort/Reason/Neighbor/IP).
+	if err := db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(unfoundBucket)
+		if err != nil {
+			return err
+		}
+		for _, rec := range unfoundRecords {
+			key := []byte(macToKey(rec.MacAddress))
+			existing := b.Get(key)
+			if existing == nil {
+				rec.FirstSeen = rec.LastSeen
+				data, err := json.Marshal(rec)
+				if err != nil {
+					return err
+				}
+				if err := b.Put(key, data); err != nil {
+					return err
+				}
+				continue
+			}
+			var cur UnfoundRecord
+			if err := json.Unmarshal(existing, &cur); err != nil {
+				return err
+			}
+			cur.LastSeen = rec.LastSeen
+			if rec.LastSwitch != "" {
+				cur.LastSwitch = rec.LastSwitch
+			}
+			if rec.LastPort != "" {
+				cur.LastPort = rec.LastPort
+			}
+			if rec.Reason != "" {
+				cur.Reason = rec.Reason
+			}
+			if rec.Neighbor != "" {
+				cur.Neighbor = rec.Neighbor
+			}
+			if rec.IP != "" {
+				cur.IP = rec.IP
+			}
+			data, err := json.Marshal(cur)
+			if err != nil {
+				return err
+			}
+			if err := b.Put(key, data); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Error batch writing unfound MAC records: %v", err)
+	}
+
 	// Топология: снимок CDP-соседей каждого коммутатора (перезаписывается).
+	// Накапливаем снимки и пишем одним транзактом (saveTopologySwitches), а не
+	// по db.Update на коммутатор.
 	scannedSet := make(map[string]bool, len(allCollected))
+	var topoSnapshots []TopologySwitch
 	for _, d := range allCollected {
 		scannedSet[d.SwitchName] = true
-		if err := saveTopologySwitch(buildTopology(d, hostNamesSet)); err != nil {
-			log.Printf("Error saving topology for %s: %v", d.SwitchName, err)
-		}
+		topoSnapshots = append(topoSnapshots, buildTopology(d, hostNamesSet))
+	}
+	if err := saveTopologySwitches(topoSnapshots); err != nil {
+		log.Printf("Error saving topology: %v", err)
 	}
 	// В управляемую область считаем и сканируемые, и объявленные соседями в CDP.
 	knownNow := make(map[string]bool, len(scannedSet)+len(discoveredManaged))
