@@ -50,6 +50,13 @@ type sviEmptyDelete struct {
 	vlanID   int
 }
 
+// emptySVIEntry — пустой SVI: комутатор, номер VLAN и описание интерфейса.
+type emptySVIEntry struct {
+	switchID string
+	vlanID   int
+	svi      cisaccs.IntDescSVI
+}
+
 func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 	debugf("Connecting to switch %s", swName)
 
@@ -184,11 +191,7 @@ func collectDataAndSave() {
 		allCollected []SwitchMACData
 		visited      = make(map[string]bool)
 		queue        []string
-		emptySVIs    []struct {
-			switchID string
-			vlanID   int
-			svi      cisaccs.IntDescSVI
-		}
+		emptySVIs    []emptySVIEntry
 		discoveredManaged = make(map[string]bool)
 		sviSeenUpdates    []sviSeenUpdate
 		emptySVIDeletes   []sviEmptyDelete
@@ -240,11 +243,7 @@ func collectDataAndSave() {
 				} else {
 					// Кандидат в пустые: метка видимости, время первого наблюдения.
 					sviSeenUpdates = append(sviSeenUpdates, sviSeenUpdate{switchID: res.data.SwitchName, vlanID: sv.VlanID, hasMac: false, now: now})
-					emptySVIs = append(emptySVIs, struct {
-						switchID string
-						vlanID   int
-						svi      cisaccs.IntDescSVI
-					}{switchID: res.data.SwitchName, vlanID: sv.VlanID, svi: sv})
+					emptySVIs = append(emptySVIs, emptySVIEntry{switchID: res.data.SwitchName, vlanID: sv.VlanID, svi: sv})
 				}
 			}
 
@@ -269,7 +268,7 @@ func collectDataAndSave() {
 	}
 
 	// Помечаем пустыми только те SVI, что без MAC уже больше месяца.
-	var confirmedEmpty int
+	var confirmedEmptySVIs []emptySVIEntry
 	for _, e := range emptySVIs {
 		if !sviIsEmptyConfirmed(e.switchID, e.vlanID, now) {
 			continue
@@ -278,7 +277,7 @@ func collectDataAndSave() {
 			log.Printf("Error saving empty SVI: %v", err)
 			continue
 		}
-		confirmedEmpty++
+		confirmedEmptySVIs = append(confirmedEmptySVIs, e)
 	}
 	// Убираем из пустых VLAN, которые вновь заняты динамическим MAC.
 	for _, d := range emptySVIDeletes {
@@ -565,7 +564,7 @@ func collectDataAndSave() {
 	fmt.Printf("Total parsed MAC entries (all switches): %d\n", totalParsed)
 	fmt.Printf("Unique MACs found: %d\n", totalMacs)
 	fmt.Printf("Empty SVIs candidate (empty <%dd): %d\n", emptySVIDays, len(emptySVIs))
-	fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, confirmedEmpty)
+	fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, len(confirmedEmptySVIs))
 	fmt.Printf("New MACs: %d\n", newCount)
 	fmt.Printf("Changed MACs: %d\n", changeCount)
 	fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
@@ -576,6 +575,12 @@ func collectDataAndSave() {
 	if len(emptySVIs) > 0 {
 		fmt.Printf("---\nEmpty SVIs (no MACs):\n")
 		for _, s := range emptySVIs {
+			fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
+		}
+	}
+	if len(confirmedEmptySVIs) > 0 {
+		fmt.Printf("---\nEmpty confirmed SVIs (no MACs):\n")
+		for _, s := range confirmedEmptySVIs {
 			fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
 		}
 	}
