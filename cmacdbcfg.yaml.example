@@ -1,0 +1,5 @@
+config:
+  startsw:
+    - switch1
+    - switch2
+  db: macs.db

@@ -28,13 +28,13 @@ var cli struct {
 	// Путь к файлу конфигурации имя_группы/логин/пароль
 	PwdFileName string `help:"Путь к файлу конфигурации имя_группы/логин/пароль" default:"/etc/cisco/groups.yaml" env:"CIS2PWDS"`
 	// Пусть к файлу конфигурации программы со списком коммутаторов от которых будем сканировать сеть.
-	CmacDbConfig string `help:"Пусть к файлу конфигурации программы со списком коммутаторов от которых будем сканировать сеть" default:"/etc/cisco/cmacdb.yaml"`
+	CmacDbConfig string `help:"Пусть к файлу конфигурации программы со списком коммутаторов от которых будем сканировать сеть" default:"/etc/cisco/cmacdbcfg.yaml" env:"CIS2MACDCFG"`
 }
 
-var rootSwitches = []string{
-	"switch1",
-	"switch2",
-}
+// rootSwitches — root-комутаторы, с которых начинаем обход сети (BFS).
+// Значение устанавливается из конфига в main() (loadConfig), чтобы не править
+// бинарь на боевом сервере.
+var rootSwitches []string
 
 type Visit struct {
 	SwitchID  string    `json:"switch_id"`
@@ -132,8 +132,21 @@ func main() {
 	// Включает/выключает вывод записей [debug].
 	debugEnabled = cli.Debug
 
-	var err error
-	db, err = bbolt.Open("macs.db", 0600, &bbolt.Options{Timeout: 1 * time.Second})
+	// Загружаем настройки из конфига (root-комутаторы и путь к БД). При ошибке
+	// открытия/чтения конфига — завершаем программу с сообщением об ошибке.
+	cfg, err := loadConfig(cli.CmacDbConfig)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	rootSwitches = cfg.Config.StartSwitches
+
+	// Путь к БД берём из конфига; пусто → «macs.db» (значение по умолчанию).
+	dbPath := cfg.Config.DbPath
+	if dbPath == "" {
+		dbPath = "macs.db"
+	}
+
+	db, err = bbolt.Open(dbPath, 0600, &bbolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		log.Fatalf("Ошибка открытия БД: %v", err)
 	}
