@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +21,14 @@ var cli struct {
 	SearchMAC string `short:"s" name:"search" help:"Поиск переданного MAC вместо заполнения базы данных"`
 	// Отладочный вывод записей [debug].
 	Debug bool `short:"d" name:"debug" help:"Выводить записи [debug]"`
+	// Порт подключения к коммутаторам по SSH
+	PortSsh int `help:"SSH порт для доступа к cisco" short:"p" default:"22"`
+	// Путь к файлу конфигурации имя_cisco/группа/ip
+	CisFileName string `help:"Путь к файлу конфигурации имя_cisco/группа/ip" default:"/etc/cisco/hosts.yaml" env:"CIS2FILE"`
+	// Путь к файлу конфигурации имя_группы/логин/пароль
+	PwdFileName string `help:"Путь к файлу конфигурации имя_группы/логин/пароль" default:"/etc/cisco/groups.yaml" env:"CIS2PWDS"`
+	// Пусть к файлу конфигурации программы со списком коммутаторов от которых будем сканировать сеть.
+	CmacDbConfig string `help:"Пусть к файлу конфигурации программы со списком коммутаторов от которых будем сканировать сеть" default:"/etc/cisco/cmacdb.yaml"`
 }
 
 var rootSwitches = []string{
@@ -447,14 +454,14 @@ func ts(t time.Time) string {
 }
 
 func getHostsFile() string {
-	if v := os.Getenv("CIS2FILE"); v != "" {
+	if v := cli.CisFileName; v != "" {
 		return v
 	}
 	return "hosts.yaml"
 }
 
 func getPasswdFile() string {
-	if v := os.Getenv("CIS2PWDS"); v != "" {
+	if v := cli.PwdFileName; v != "" {
 		return v
 	}
 	return "groups.yaml"

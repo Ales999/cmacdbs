@@ -56,26 +56,26 @@ func collectFromSwitch(acc *cisaccs.CisAccount, swName string) switchResult {
 	var output1, output2, cdpOut, arpOut []string
 	var err1, err2, err3, err4 error
 
-	output1, err1 = acc.OneCisExecuteSsh(swName, 22, []string{"sh mac address-table"})
+	output1, err1 = acc.OneCisExecuteSsh(swName, cli.PortSsh, []string{"sh mac address-table"})
 	if err1 != nil {
 		return switchResult{err: fmt.Errorf("switch %s sh mac address-table: %w", swName, err1)}
 	}
 
-	output2, err2 = acc.OneCisExecuteSsh(swName, 22, []string{"sh int description | b ^Vl"})
+	output2, err2 = acc.OneCisExecuteSsh(swName, cli.PortSsh, []string{"sh int description | b ^Vl"})
 	if err2 != nil {
 		return switchResult{err: fmt.Errorf("switch %s sh int description: %w", swName, err2)}
 	}
 
 	// CDP (filtered) + etherchannel — отдаётся вместе, так как nxthst
 	// FindNextPortbyMac парсит и CDP, и группы Port-Channel из одного массива.
-	cdpOut, err3 = acc.OneCisExecuteSsh(swName, 22, []string{"sh etherchannel detail | i Group:|Port:", "sh cdp entry * | i Device|Interface"})
+	cdpOut, err3 = acc.OneCisExecuteSsh(swName, cli.PortSsh, []string{"sh etherchannel detail | i Group:|Port:", "sh cdp entry * | i Device|Interface"})
 	if err3 != nil {
 		return switchResult{err: fmt.Errorf("switch %s sh cdp/etherchannel: %w", swName, err3)}
 	}
 
 	// ARP-таблица: содержит привязку IP -> MAC, которую нельзя получить из
 	// таблицы MAC-адресов. Нужна, чтобы сохранить IP для конечных точек.
-	arpOut, err4 = acc.OneCisExecuteSsh(swName, 22, []string{"sh arp"})
+	arpOut, err4 = acc.OneCisExecuteSsh(swName, cli.PortSsh, []string{"sh arp"})
 	if err4 != nil {
 		return switchResult{err: fmt.Errorf("switch %s sh arp: %w", swName, err4)}
 	}
