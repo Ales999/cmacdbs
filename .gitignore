@@ -19,6 +19,7 @@
 !LICENSE
 
 # !Makefile
+!cmacdbcfg.yaml.example
 
 # ...even if they are in subdirectories
 !*/
