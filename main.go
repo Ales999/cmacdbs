@@ -17,10 +17,11 @@ import (
 )
 
 var cli struct {
-	SearchMac   string `arg:"" optional:"" name:"search" help:"Searched MAC or IP"`
-	OnlyCollect bool   `short:"c" name:"сollect" help:"Only collect MAC, no show results"`
+	SearchMac string `arg:"" optional:"" name:"search" help:"Searched MAC or IP"`
+	// Тихий режим
+	OnlyCollect bool `short:"c" name:"сollect" help:"Only collect MACs, no show results"`
 	// Режим поиска одного MAC вместо заполнения базы данных. MAC передаётся после -s.
-	//SearchMAC string `short:"s" name:"search" help:"Поиск переданного MAC вместо заполнения базы данных"`
+	ShowStats bool `short:"s" name:"showstats" help:"Collect MACs, and show results"`
 	// Отладочный вывод записей [debug].
 	Debug bool `short:"d" name:"debug" help:"Выводить записи [debug]"`
 	// Порт подключения к коммутаторам по SSH
@@ -155,7 +156,7 @@ func main() {
 	defer db.Close()
 
 	// --== WORK ==--
-	if cli.OnlyCollect {
+	if cli.OnlyCollect || cli.ShowStats {
 		// Собираем MAC-и с устройств
 		collectDataAndSave()
 		// Если указан флаг только сбора информации то флаг поиска игнорируем.

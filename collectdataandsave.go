@@ -559,7 +559,8 @@ func collectDataAndSave() {
 	for _, d := range allCollected {
 		totalParsed += len(d.MACs)
 	}
-	if !cli.OnlyCollect {
+	// Печатаем статистику если необходимо после выполнения запроса.
+	if !cli.OnlyCollect && cli.ShowStats {
 
 		fmt.Printf("\n=== MAC Collection Summary ===\n")
 		fmt.Printf("Switches collected: %d\n", len(allCollected))
