@@ -187,11 +187,11 @@ func collectDataAndSave() {
 	}
 
 	var (
-		mu           sync.Mutex
-		allCollected []SwitchMACData
-		visited      = make(map[string]bool)
-		queue        []string
-		emptySVIs    []emptySVIEntry
+		mu                sync.Mutex
+		allCollected      []SwitchMACData
+		visited           = make(map[string]bool)
+		queue             []string
+		emptySVIs         []emptySVIEntry
 		discoveredManaged = make(map[string]bool)
 		sviSeenUpdates    []sviSeenUpdate
 		emptySVIDeletes   []sviEmptyDelete
@@ -555,33 +555,36 @@ func collectDataAndSave() {
 		log.Printf("Error reconciling topology: %v", err)
 	}
 
-	fmt.Printf("\n=== MAC Collection Summary ===\n")
-	fmt.Printf("Switches collected: %d\n", len(allCollected))
 	var totalParsed int
 	for _, d := range allCollected {
 		totalParsed += len(d.MACs)
 	}
-	fmt.Printf("Total parsed MAC entries (all switches): %d\n", totalParsed)
-	fmt.Printf("Unique MACs found: %d\n", totalMacs)
-	fmt.Printf("Empty SVIs candidate (empty <%dd): %d\n", emptySVIDays, len(emptySVIs))
-	fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, len(confirmedEmptySVIs))
-	fmt.Printf("New MACs: %d\n", newCount)
-	fmt.Printf("Changed MACs: %d\n", changeCount)
-	fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
-	fmt.Printf("Unfound MACs (link leads outside): %d\n", unfoundCount)
-	fmt.Printf("Internal/interface MACs (port not found): %d\n", internalCount)
-	fmt.Printf("Unfound MACs with IP resolved: %d\n", unfoundIpCount)
-	fmt.Printf("Endpoint MACs with IP resolved: %d\n", ipCount)
-	if len(emptySVIs) > 0 {
-		fmt.Printf("---\nEmpty SVIs (no MACs):\n")
-		for _, s := range emptySVIs {
-			fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
+	if !cli.OnlyCollect {
+
+		fmt.Printf("\n=== MAC Collection Summary ===\n")
+		fmt.Printf("Switches collected: %d\n", len(allCollected))
+		fmt.Printf("Total parsed MAC entries (all switches): %d\n", totalParsed)
+		fmt.Printf("Unique MACs found: %d\n", totalMacs)
+		fmt.Printf("Empty SVIs candidate (empty <%dd): %d\n", emptySVIDays, len(emptySVIs))
+		fmt.Printf("Empty SVIs confirmed (empty >%dd): %d\n", emptySVIDays, len(confirmedEmptySVIs))
+		fmt.Printf("New MACs: %d\n", newCount)
+		fmt.Printf("Changed MACs: %d\n", changeCount)
+		fmt.Printf("Unchanged MACs: %d\n", unchangedCount)
+		fmt.Printf("Unfound MACs (link leads outside): %d\n", unfoundCount)
+		fmt.Printf("Internal/interface MACs (port not found): %d\n", internalCount)
+		fmt.Printf("Unfound MACs with IP resolved: %d\n", unfoundIpCount)
+		fmt.Printf("Endpoint MACs with IP resolved: %d\n", ipCount)
+		if len(emptySVIs) > 0 {
+			fmt.Printf("---\nEmpty SVIs (no MACs):\n")
+			for _, s := range emptySVIs {
+				fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
+			}
 		}
-	}
-	if len(confirmedEmptySVIs) > 0 {
-		fmt.Printf("---\nEmpty confirmed SVIs (no MACs):\n")
-		for _, s := range confirmedEmptySVIs {
-			fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
+		if len(confirmedEmptySVIs) > 0 {
+			fmt.Printf("---\nEmpty confirmed SVIs (no MACs):\n")
+			for _, s := range confirmedEmptySVIs {
+				fmt.Printf("  %s - %s\n", s.switchID, s.svi.Interface)
+			}
 		}
-	}
+	} // Only not only connect
 }

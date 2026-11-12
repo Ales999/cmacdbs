@@ -17,8 +17,10 @@ import (
 )
 
 var cli struct {
+	SearchMac   string `arg:"" optional:"" name:"search" help:"Searched MAC or IP"`
+	OnlyCollect bool   `short:"c" name:"сollect" help:"Only collect MAC, no show results"`
 	// Режим поиска одного MAC вместо заполнения базы данных. MAC передаётся после -s.
-	SearchMAC string `short:"s" name:"search" help:"Поиск переданного MAC вместо заполнения базы данных"`
+	//SearchMAC string `short:"s" name:"search" help:"Поиск переданного MAC вместо заполнения базы данных"`
 	// Отладочный вывод записей [debug].
 	Debug bool `short:"d" name:"debug" help:"Выводить записи [debug]"`
 	// Порт подключения к коммутаторам по SSH
@@ -152,13 +154,21 @@ func main() {
 	}
 	defer db.Close()
 
-	// Если указан -s, ищем переданный MAC (или IP) вместо заполнения базы.
-	if strings.TrimSpace(cli.SearchMAC) != "" {
-		fmt.Println(search(strings.TrimSpace(cli.SearchMAC)))
+	// --== WORK ==--
+	if cli.OnlyCollect {
+		// Собираем MAC-и с устройств
+		collectDataAndSave()
+		// Если указан флаг только сбора информации то флаг поиска игнорируем.
 		return
 	}
 
-	collectDataAndSave()
+	// Если опционально кроме флагов указано что-то для поиска, то выполняем сам поиск
+	sm := strings.TrimSpace(cli.SearchMac)
+	if !strings.EqualFold(sm, "") {
+		fmt.Println(searchMacOrIp(sm))
+
+	}
+
 }
 
 // debugf выводит отладочную запись только когда включена отладка (флаг -d).
@@ -168,10 +178,10 @@ func debugf(format string, args ...any) {
 	}
 }
 
-// search определяет тип переданного адраса (IPv4 или MAC) и вызывает
+// searchMacOrIp определяет тип переданного адраса (IPv4 или MAC) и вызывает
 // соответствующий режим поиска. Строки взаимно исключающие: IPv4 содержит
 // точки и десятичные октеты, MAC — 12 hex-символов, поэтому путаницы нет.
-func search(raw string) string {
+func searchMacOrIp(raw string) string {
 	if ip, ok := normalizeIP(raw); ok {
 		return searchByIP(ip)
 	}

@@ -118,7 +118,7 @@ func TestSearchByIP(t *testing.T) {
 	})
 
 	t.Run("dispatcher picks ip", func(t *testing.T) {
-		out := search("10.23.1.1")
+		out := searchMacOrIp("10.23.1.1")
 		if !strings.Contains(out, "MAC 4C:BD:8F:73:D9:4D") {
 			t.Errorf("search(ip) did not resolve to the record;\ngot:\n%s", out)
 		}
@@ -139,7 +139,7 @@ func TestSearchAutoDetect(t *testing.T) {
 	newTestDB(t)
 
 	t.Run("invalid input", func(t *testing.T) {
-		out := search("nope")
+		out := searchMacOrIp("nope")
 		if !strings.Contains(out, "не похоже ни на MAC-адрес, ни на IP-адрес") {
 			t.Errorf("expected ambiguous error, got:\n%s", out)
 		}
@@ -148,7 +148,7 @@ func TestSearchAutoDetect(t *testing.T) {
 	t.Run("mac input goes to mac path", func(t *testing.T) {
 		// Ни MAC, ни IP в базе нет — но ошибка должна быть про MAC-путь, а не
 		// про неоднозначность (вход похож на MAC).
-		out := search("4cbd8f73d94d")
+		out := searchMacOrIp("4cbd8f73d94d")
 		if strings.Contains(out, "не похоже ни на") {
 			t.Errorf("mac-like input should not report ambiguous error:\n%s", out)
 		}
